@@ -198,7 +198,34 @@ sequenceDiagram
     end
 ```
 
-Optimization: keep a cached token and only re-check on critical ops or every N seconds to limit read load.
+**Enhanced Fencing Strategy:**
+
+1. **Periodic Background Validation:**
+   - If `ValidationInterval > 0`, validate token every N seconds
+   - Update cached token on successful validation
+   - If validation fails, demote immediately
+
+2. **Operation-Level Validation:**
+   - If `ValidateOnCriticalOps = true`, always validate before critical operations
+   - Critical operations should call `ValidateToken()` before proceeding
+   - Non-critical operations can use cached token
+
+3. **Token Caching:**
+   - Cache token locally with timestamp
+   - Refresh cache on successful heartbeat or validation
+   - Use cached token for non-critical operations to reduce KV read load
+
+4. **Validation Flow:**
+   ```
+   if ValidateOnCriticalOps or (timeSinceLastValidation > ValidationInterval):
+       tokenFromKV = kv.Get(key).token
+       if tokenFromKV != cachedToken:
+           demote()
+           return false
+       cachedToken = tokenFromKV
+       lastValidation = now()
+   return true
+   ```
 
 ---
 
@@ -215,19 +242,28 @@ stateDiagram-v2
     Candidate --> Leader: Create success
     Candidate --> Follower: Create fail
     Leader --> Leader: Heartbeat OK
-    Leader --> Demoted: Heartbeat fails / Update conflict
+    Leader --> Demoted: Heartbeat fails / Update conflict / Token mismatch / Health check fails / Connection lost
     Demoted --> Candidate: Retry election (after backoff)
     Follower --> Candidate: Watch detects delete
+    Follower --> Follower: Watch continues
     Candidate --> Stopped: Stop()
     Leader --> Stopped: Stop()
     Follower --> Stopped: Stop()
+    Demoted --> Stopped: Stop()
 ```
 
 Transitions details:
 
-* `Start()` constructs the KV client, creates the watcher, and attempts initial `Create`.
-* `Stop()` cancels contexts, stops heartbeat, optionally deletes KV key (if leader & graceful).
-* `Demoted` indicates the instance detected loss of leadership due to conflict, network issues, or manual admin action.
+* `Start()` constructs the KV client, validates configuration, creates the watcher, and attempts initial `Create`.
+* `Stop()` cancels contexts, stops heartbeat, optionally deletes KV key (if leader & graceful), waits for OnDemote callback.
+* `Demoted` indicates the instance detected loss of leadership due to:
+  - Heartbeat failure (revision mismatch, update conflict)
+  - Token validation failure
+  - Health check failure (if HealthChecker configured)
+  - Connection loss (beyond DisconnectGracePeriod)
+  - Manual admin action
+* State transitions are logged with structured logging including correlation IDs for tracing.
+* Each state transition updates metrics (`election_transitions_total`).
 
 ---
 
@@ -237,22 +273,50 @@ Transitions details:
 
 * Client cannot heartbeat → TTL expires → other nodes elect new leader
 * Isolated client must detect loss of connectivity and demote itself (stop leader tasks) rather than continuing to act
-* Implementation: monitor `nats.Conn` status events; if disconnected long enough, demote immediately
+* Implementation: monitor `nats.Conn` status events; if disconnected beyond `DisconnectGracePeriod`, demote immediately
+* Connection status monitoring: Subscribe to NATS connection status callbacks and track last successful operation timestamp
 
 ### Split brain risk due to staggered KV semantics
 
 * Minimize by using conditional update with expected revision and fencing tokens
 * Avoid blind `Put` writes which can overwrite other leader entries
+* Always use `Update` with `ExpectedRevision` for heartbeats
+* Validate fencing token before any critical operations
 
 ### Slow heartbeats / GC pressure
 
 * Ensure heartbeat frequency is fast enough relative to TTL. Eg: TTL 5s, heartbeat 1s.
 * If leader misses X consecutive heartbeats, demote proactively even before TTL expires
+* Track heartbeat failures and demote if threshold exceeded
+* Consider heartbeat timeout: if Update operation takes too long, treat as failure
 
 ### Thundering herd on expiry
 
 * Use small randomized jitter + exponential backoff for retries
 * Optionally implement winner selection policy (priority) but prefer voluntary demotion to forced preemption
+* Implement circuit breaker: if too many failed attempts, back off longer
+
+### NATS KV bucket deletion
+
+* If bucket is deleted while election is running, all operations will fail
+* Detect bucket deletion errors and fail fast (don't retry indefinitely)
+* Optionally support `BucketAutoCreate` for development (not recommended for production)
+
+### Error classification
+
+* **Transient errors**: Network timeouts, temporary unavailability, connection issues
+  - Retry with exponential backoff
+  - Don't demote immediately
+* **Permanent errors**: Invalid configuration, permission denied, bucket doesn't exist
+  - Fail fast, don't retry
+  - Return error to caller
+
+### Connection health monitoring
+
+* Track NATS connection status continuously
+* If disconnected, stop heartbeating and demote after grace period
+* On reconnection, verify leadership status before resuming leader tasks
+* Implement connection health check: periodic ping to verify connectivity
 
 ---
 
@@ -264,6 +328,31 @@ Suggested strategy:
 * On `Create` fail: retry with exponential backoff `min(maxBackoff, base*2^attempt) + rand()`
 * Limit concurrent `Create` attempts to avoid saturating KV under heavy churn
 
+**Detailed Backoff Algorithm:**
+
+```
+InitialBackoff = 50ms
+MaxBackoff = 5s
+BackoffMultiplier = 2.0
+Jitter = 0.1 (10%)
+
+For attempt N:
+  backoff = min(MaxBackoff, InitialBackoff * (BackoffMultiplier ^ N))
+  jitterAmount = backoff * Jitter * rand(-1, 1)
+  actualBackoff = backoff + jitterAmount
+  wait(actualBackoff)
+```
+
+**Circuit Breaker Pattern:**
+* Track consecutive failures
+* If failures exceed threshold (e.g., 10), enter "circuit open" state
+* In circuit open state, back off significantly (e.g., 30s) before retrying
+* On success, reset circuit breaker
+
+**Jitter Strategy:**
+* Use uniform random jitter for initial attempts (reduces thundering herd)
+* Use exponential backoff with jitter for retries (reduces load on KV)
+
 ---
 
 ## 10. Operational concerns & testing matrix
@@ -273,6 +362,38 @@ Operational checks:
 * Ensure NATS JetStream is configured with enough RAFT quorum for your fault tolerance needs
 * Monitor leader transitions per minute — spikes may indicate instability
 * Use TLS and NATS accounts to secure KV access
+* Monitor connection status — frequent disconnections indicate network issues
+* Track heartbeat latency — high latency may indicate NATS cluster issues
+* Monitor token validation failures — indicates potential split-brain scenarios
+
+**Monitoring Recommendations:**
+
+* **Key Metrics:**
+  - Leader transition rate (should be low in stable systems)
+  - Heartbeat success rate (should be near 100%)
+  - Token validation failures (should be 0)
+  - Connection uptime (should be near 100%)
+  - Election attempt success rate
+
+* **Alerts:**
+  - Alert if no leader for > TTL duration
+  - Alert if leader transitions > N per minute
+  - Alert if heartbeat failures > threshold
+  - Alert if connection status is disconnected
+
+**Configuration Best Practices:**
+
+* **Production:**
+  - TTL: 10-30 seconds (balance between failover speed and stability)
+  - HeartbeatInterval: TTL / 3 to TTL / 5
+  - DisconnectGracePeriod: 2-3x HeartbeatInterval
+  - Enable token validation on critical operations
+  - Use structured logging with appropriate log levels
+
+* **Development:**
+  - Shorter TTL for faster testing (3-5 seconds)
+  - Enable BucketAutoCreate for convenience
+  - More verbose logging
 
 Testing matrix (suggested):
 
@@ -283,10 +404,174 @@ Testing matrix (suggested):
 | Network partition      | Block network for leader      | Leader demotes; followers elect new leader             |
 | Slow update            | Delay KV update response      | Leader detects failure and demotes if update conflicts |
 | Thundering herd        | Expire key with 100 followers | System remains stable; one wins quickly                |
+| Connection loss        | Disconnect NATS connection    | Leader demotes after DisconnectGracePeriod             |
+| Bucket deletion        | Delete KV bucket              | All operations fail fast, no infinite retries          |
+| Token validation       | Manually change token in KV   | Leader detects mismatch and demotes                    |
+| Graceful shutdown      | Call Stop() on leader         | Key deleted (if enabled), OnDemote called, clean exit  |
+| Health check failure   | HealthChecker returns false   | Leader voluntarily demotes                             |
+| Priority takeover      | Higher priority candidate     | Only if AllowPriorityTakeover enabled and safe         |
+| Clock skew             | Simulate clock differences    | System works correctly (doesn't rely on clocks)        |
+| GC pressure            | Force GC during heartbeat     | Heartbeat may be delayed but should recover            |
+| NATS server restart    | Restart NATS cluster          | Clients reconnect, leadership maintained or re-elected |
+
+## 11. Connection management & lifecycle
+
+**Connection Health Monitoring:**
+
+The library continuously monitors NATS connection status to detect network issues and prevent stale leadership.
+
+```mermaid
+sequenceDiagram
+    participant Client as Election Client
+    participant Conn as NATS Connection
+    participant KV as NATS KV
+
+    Client->>Conn: Subscribe to status events
+    Conn->>Client: Status: CONNECTED
+    Client->>Client: Start heartbeating
+    
+    Note over Conn: Network partition occurs
+    Conn->>Client: Status: DISCONNECTED
+    Client->>Client: Stop heartbeating
+    Client->>Client: Start disconnect timer
+    
+    alt DisconnectGracePeriod exceeded
+        Client->>Client: Demote self
+        Client->>Client: OnDemote()
+    else Connection restored
+        Conn->>Client: Status: RECONNECTED
+        Client->>KV: Verify leadership status
+        alt Still leader
+            Client->>Client: Resume heartbeating
+        else Not leader
+            Client->>Client: Transition to Follower
+        end
+    end
+```
+
+**Implementation Details:**
+
+1. **Connection Status Tracking:**
+   - Subscribe to NATS connection status callbacks
+   - Track last successful operation timestamp
+   - On disconnect, start grace period timer
+
+2. **Reconnection Handling:**
+   - On reconnect, verify leadership by reading KV
+   - Compare token to ensure still valid leader
+   - Only resume leader tasks if verification succeeds
+
+3. **Connection Timeout:**
+   - All KV operations use `ConnectionTimeout`
+   - Operations that exceed timeout are treated as failures
+   - Timeout should be less than `HeartbeatInterval` to detect issues quickly
+
+## 12. Error handling & retry strategy
+
+**Error Classification:**
+
+Errors are classified as either transient or permanent:
+
+* **Transient Errors** (retry with backoff):
+  - Network timeouts
+  - Temporary NATS unavailability
+  - Connection issues
+  - Rate limiting (if applicable)
+
+* **Permanent Errors** (fail fast):
+  - Invalid configuration
+  - Permission denied
+  - Bucket doesn't exist (unless BucketAutoCreate enabled)
+  - Invalid instance ID
+
+**Retry Strategy:**
+
+```go
+type RetryConfig struct {
+    MaxAttempts      int           // 0 = unlimited
+    InitialBackoff   time.Duration
+    MaxBackoff       time.Duration
+    BackoffMultiplier float64
+    Jitter           float64
+}
+
+func retryWithBackoff(ctx context.Context, cfg RetryConfig, fn func() error) error {
+    attempt := 0
+    for {
+        err := fn()
+        if err == nil {
+            return nil
+        }
+        
+        if isPermanentError(err) {
+            return err // Don't retry permanent errors
+        }
+        
+        if cfg.MaxAttempts > 0 && attempt >= cfg.MaxAttempts {
+            return fmt.Errorf("max attempts exceeded: %w", err)
+        }
+        
+        backoff := calculateBackoff(cfg, attempt)
+        select {
+        case <-ctx.Done():
+            return ctx.Err()
+        case <-time.After(backoff):
+            attempt++
+        }
+    }
+}
+```
+
+## 13. Configuration validation
+
+**Validation Rules:**
+
+1. **TTL vs HeartbeatInterval:**
+   - `TTL >= HeartbeatInterval * 3` (minimum safety margin)
+   - Recommended: `TTL >= HeartbeatInterval * 5`
+
+2. **InstanceID:**
+   - Must be non-empty
+   - Should be unique per running process
+   - Recommended: include hostname, PID, or UUID
+
+3. **Bucket:**
+   - Must be non-empty
+   - Should exist (unless BucketAutoCreate enabled)
+   - Must be accessible with provided credentials
+
+4. **Timeouts:**
+   - `ConnectionTimeout` should be < `HeartbeatInterval`
+   - `DisconnectGracePeriod` should be >= `HeartbeatInterval * 2`
+
+5. **Fencing:**
+   - If `ValidationInterval > 0`, should be >= `HeartbeatInterval`
+   - If `ValidateOnCriticalOps = true`, ensure critical operations call validation
+
+**Validation Implementation:**
+
+```go
+func validateConfig(cfg ElectionConfig) error {
+    if cfg.TTL < cfg.HeartbeatInterval*3 {
+        return fmt.Errorf("TTL must be at least 3x HeartbeatInterval")
+    }
+    if cfg.InstanceID == "" {
+        return fmt.Errorf("InstanceID is required")
+    }
+    if cfg.Bucket == "" {
+        return fmt.Errorf("Bucket is required")
+    }
+    if cfg.ConnectionTimeout > 0 && cfg.ConnectionTimeout >= cfg.HeartbeatInterval {
+        return fmt.Errorf("ConnectionTimeout should be less than HeartbeatInterval")
+    }
+    // ... more validations
+    return nil
+}
+```
 
 ---
 
-## 11. Appendix — Example mermaid diagrams
+## 14. Appendix — Example mermaid diagrams
 
 ### 11.1 Initial attempt and promotion
 
