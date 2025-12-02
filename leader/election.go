@@ -60,17 +60,84 @@ type ElectionConfig struct {
 	// DeleteOnStop          bool          // Delete key on Stop() for fast failover
 }
 
-// NewElection creates a new Election instance with the given NATS connection and configuration.
-// The NATS connection must be connected and JetStream must be enabled.
-// TODO: Will be fully implemented in Step 3
-func NewElection(nc *nats.Conn, cfg ElectionConfig) (Election, error) {
-	// Validate configuration
-	if err := validateConfig(cfg); err != nil {
+// JetStreamProvider is an interface for types that can provide JetStream.
+// This allows both *nats.Conn and mock connections to be used in tests.
+type JetStreamProvider interface {
+	JetStream() (JetStreamContext, error)
+}
+
+// KeyValue is an interface for KeyValue operations.
+// This allows both real nats.KeyValue and mock KeyValue to be used.
+type KeyValue interface {
+	Create(key string, value []byte, opts ...interface{}) (uint64, error)
+	Update(key string, value []byte, rev uint64, opts ...interface{}) (uint64, error)
+	Get(key string) (interface{}, error)
+	Delete(key string) error
+	Watch(key string, opts ...interface{}) (interface{}, error)
+}
+
+// JetStreamContext is an interface for JetStream operations.
+// This allows both real and mock JetStream to be used.
+type JetStreamContext interface {
+	KeyValue(bucket string) (KeyValue, error)
+}
+
+// natsKeyValueAdapter adapts nats.KeyValue to our KeyValue interface
+type natsKeyValueAdapter struct {
+	kv nats.KeyValue
+}
+
+func (a *natsKeyValueAdapter) Create(key string, value []byte, opts ...interface{}) (uint64, error) {
+	return a.kv.Create(key, value)
+}
+
+func (a *natsKeyValueAdapter) Update(key string, value []byte, rev uint64, opts ...interface{}) (uint64, error) {
+	return a.kv.Update(key, value, rev)
+}
+
+func (a *natsKeyValueAdapter) Get(key string) (interface{}, error) {
+	return a.kv.Get(key)
+}
+
+func (a *natsKeyValueAdapter) Delete(key string) error {
+	return a.kv.Delete(key)
+}
+
+func (a *natsKeyValueAdapter) Watch(key string, opts ...interface{}) (interface{}, error) {
+	return a.kv.Watch(key)
+}
+
+// natsJetStreamAdapter adapts nats.JetStreamContext to our JetStreamContext interface
+type natsJetStreamAdapter struct {
+	js nats.JetStreamContext
+}
+
+func (a *natsJetStreamAdapter) KeyValue(bucket string) (KeyValue, error) {
+	kv, err := a.js.KeyValue(bucket)
+	if err != nil {
 		return nil, err
 	}
+	return &natsKeyValueAdapter{kv: kv}, nil
+}
 
-	// TODO: Create and return kvElection implementation in Step 3
-	return nil, nil
+// natsConnAdapter adapts *nats.Conn to JetStreamProvider
+type natsConnAdapter struct {
+	nc *nats.Conn
+}
+
+func (a *natsConnAdapter) JetStream() (JetStreamContext, error) {
+	js, err := a.nc.JetStream()
+	if err != nil {
+		return nil, err
+	}
+	return &natsJetStreamAdapter{js: js}, nil
+}
+
+// NewElection creates a new Election instance with the given NATS connection and configuration.
+// The NATS connection must be connected and JetStream must be enabled.
+// For testing, you can pass a mock connection that implements JetStreamProvider.
+func NewElection(nc JetStreamProvider, cfg ElectionConfig) (Election, error) {
+	return newKVElection(nc, cfg)
 }
 
 // validateConfig validates the ElectionConfig.
