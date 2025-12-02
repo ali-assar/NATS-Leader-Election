@@ -213,6 +213,11 @@ func (m *MockKeyValue) Delete(key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Check if key exists
+	if _, exists := m.data[key]; !exists {
+		return errors.New("key not found")
+	}
+
 	// Delete the key
 	delete(m.data, key)
 
