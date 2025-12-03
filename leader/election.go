@@ -140,6 +140,12 @@ func NewElection(nc JetStreamProvider, cfg ElectionConfig) (Election, error) {
 	return newKVElection(nc, cfg)
 }
 
+// NewElectionWithConn is a convenience function that accepts *nats.Conn directly.
+// This is the recommended way to create an Election for production use.
+func NewElectionWithConn(nc *nats.Conn, cfg ElectionConfig) (Election, error) {
+	return NewElection(&natsConnAdapter{nc: nc}, cfg)
+}
+
 // validateConfig validates the ElectionConfig.
 // TODO: Implement in validation.go (Phase 1, Step 10)
 func validateConfig(cfg ElectionConfig) error {

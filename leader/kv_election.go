@@ -11,6 +11,16 @@ import (
 	"github.com/google/uuid"
 )
 
+// Election state constants
+const (
+	StateInit      = "INIT"
+	StateCandidate = "CANDIDATE"
+	StateLeader    = "LEADER"
+	StateFollower  = "FOLLOWER"
+	StateDemoted   = "DEMOTED"
+	StateStopped   = "STOPPED"
+)
+
 // kvElection is the internal implementation of Election interface.
 type kvElection struct {
 	cfg ElectionConfig
@@ -67,7 +77,7 @@ func newKVElection(nc JetStreamProvider, cfg ElectionConfig) (*kvElection, error
 	e.leaderID.Store("")
 	e.token.Store("")
 	e.revision.Store(0)
-	e.state.Store("INIT")
+	e.state.Store(StateInit)
 	e.lastHeartbeat.Store(time.Time{})
 	e.lastTransition.Store(time.Time{})
 
@@ -84,7 +94,7 @@ func (e *kvElection) Start(ctx context.Context) error {
 
 	e.ctx, e.cancel = context.WithCancel(ctx)
 
-	e.state.Store("CANDIDATE")
+	e.state.Store(StateCandidate)
 	e.lastTransition.Store(time.Now())
 
 	go e.attemptAcquire()
@@ -103,6 +113,9 @@ func (e *kvElection) attemptAcquire() {
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
+		// This should never happen, but if it does, become follower
+		// TODO: Add proper logging when logger is integrated
+		e.becomeFollower()
 		return
 	}
 
@@ -124,7 +137,7 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 	e.leaderID.Store(e.cfg.InstanceID)
 	e.token.Store(token)
 	e.revision.Store(rev)
-	e.state.Store("LEADER")
+	e.state.Store(StateLeader)
 	e.lastHeartbeat.Store(time.Now())
 	e.lastTransition.Store(time.Now())
 
@@ -141,7 +154,7 @@ func (e *kvElection) becomeFollower() {
 	defer e.mu.Unlock()
 
 	e.isLeader.Store(false)
-	e.state.Store("FOLLOWER")
+	e.state.Store(StateFollower)
 	e.lastTransition.Store(time.Now())
 
 	// TODO: Start watcher to monitor for leader changes (Step 5)
@@ -157,15 +170,19 @@ func (e *kvElection) Stop() error {
 		return ErrAlreadyStopped
 	}
 
+	// Check if we were leader BEFORE clearing state
+	wasLeader := e.isLeader.Load()
+
 	if e.cancel != nil {
 		e.cancel()
 	}
 
 	e.isLeader.Store(false)
-	e.state.Store("STOPPED")
+	e.state.Store(StateStopped)
 	e.lastTransition.Store(time.Now())
 
-	if e.onDemote != nil && e.isLeader.Load() {
+	// Call onDemote if we were leader
+	if e.onDemote != nil && wasLeader {
 		e.onDemote()
 	}
 
@@ -182,29 +199,39 @@ func (e *kvElection) Status() ElectionStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	state := "INIT"
+	state := StateInit
 	if s := e.state.Load(); s != nil {
-		state = s.(string)
+		if str, ok := s.(string); ok {
+			state = str
+		}
 	}
 
 	leaderID := ""
 	if id := e.leaderID.Load(); id != nil {
-		leaderID = id.(string)
+		if str, ok := id.(string); ok {
+			leaderID = str
+		}
 	}
 
 	token := ""
 	if t := e.token.Load(); t != nil {
-		token = t.(string)
+		if str, ok := t.(string); ok {
+			token = str
+		}
 	}
 
 	lastHeartbeat := time.Time{}
 	if hb := e.lastHeartbeat.Load(); hb != nil {
-		lastHeartbeat = hb.(time.Time)
+		if t, ok := hb.(time.Time); ok {
+			lastHeartbeat = t
+		}
 	}
 
 	lastTransition := time.Time{}
 	if lt := e.lastTransition.Load(); lt != nil {
-		lastTransition = lt.(time.Time)
+		if t, ok := lt.(time.Time); ok {
+			lastTransition = t
+		}
 	}
 
 	return ElectionStatus{

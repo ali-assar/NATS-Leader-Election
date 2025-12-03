@@ -276,8 +276,8 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
             if err != nil {
                 consecutiveFailures++
                 if isPermanentError(err) || consecutiveFailures >= maxFailures {
-                    e.handleHeartbeatFailure(err)
-                    return
+                e.handleHeartbeatFailure(err)
+                return
                 }
                 // Transient error, will retry on next tick
                 e.metrics.RecordHeartbeatFailure(err)
