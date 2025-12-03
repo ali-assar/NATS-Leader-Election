@@ -29,8 +29,8 @@ func TestAttemptAcquire_Success(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	// Wait a bit for attemptAcquire to complete (runs in goroutine)
-	time.Sleep(100 * time.Millisecond)
+	// Wait for attemptAcquire to complete (runs in goroutine)
+	waitForLeader(t, election, true, 1*time.Second)
 
 	// Check that we became leader
 	assert.True(t, election.IsLeader(), "Expected to be leader")
@@ -63,8 +63,8 @@ func TestAttemptAcquire_KeyExists(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	// Wait a bit for attemptAcquire to complete
-	time.Sleep(100 * time.Millisecond)
+	// Wait for attemptAcquire to complete
+	waitForLeader(t, election, false, 1*time.Second)
 
 	// Check that we did NOT become leader
 	assert.False(t, election.IsLeader(), "Expected NOT to be leader")
@@ -130,7 +130,10 @@ func TestAttemptAcquire_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	// Wait for all attemptAcquire goroutines to complete
-	time.Sleep(200 * time.Millisecond)
+	// At least one should become leader
+	waitForCondition(t, func() bool {
+		return election1.IsLeader() || election2.IsLeader() || election3.IsLeader()
+	}, 1*time.Second, "at least one leader")
 
 	// Count how many became leader (should be exactly 1)
 	leaderCount := 0
@@ -200,8 +203,10 @@ func TestOnPromote_Callback(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	// Wait for attemptAcquire to complete
-	time.Sleep(100 * time.Millisecond)
+	// Wait for attemptAcquire to complete and callback to be called
+	waitForCondition(t, func() bool {
+		return callbackCalled
+	}, 1*time.Second, "OnPromote callback")
 
 	// Check callback was called
 	assert.True(t, callbackCalled, "OnPromote callback should be called")
@@ -234,15 +239,17 @@ func TestOnDemote_Callback(t *testing.T) {
 	// Start and become leader
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
-	time.Sleep(100 * time.Millisecond)
+	waitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader())
 
 	// Stop the election (should trigger demote)
 	err = election.Stop()
 	assert.NoError(t, err)
 
-	// Wait a bit for callback
-	time.Sleep(50 * time.Millisecond)
+	// Wait for callback to be called
+	waitForCondition(t, func() bool {
+		return demoteCalled
+	}, 500*time.Millisecond, "OnDemote callback")
 
 	// Check callback was called
 	assert.True(t, demoteCalled, "OnDemote callback should be called on stop")

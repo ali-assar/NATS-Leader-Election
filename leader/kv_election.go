@@ -141,8 +141,7 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 	e.lastHeartbeat.Store(time.Now())
 	e.lastTransition.Store(time.Now())
 
-	// TODO: Start heartbeat loop (Step 4)
-	// go e.heartbeatLoop()
+	go e.heartbeatLoop(e.ctx)
 
 	if e.onPromote != nil {
 		go e.onPromote(e.ctx, token)

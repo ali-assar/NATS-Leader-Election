@@ -71,15 +71,24 @@ type MockKeyValue struct {
 	DeleteFunc func(key string) error
 	WatchFunc  func(key string, opts ...WatchOption) (Watcher, error)
 
-	// Advanced: Delay simulation
+	// Advanced: Delay simulation (deprecated - use channels instead)
 	delay time.Duration
+
+	// Channel-based coordination for testing
+	// These channels allow tests to control timing deterministically
+	UpdateStartChan    chan struct{} // Signals when Update() starts
+	UpdateCompleteChan chan struct{} // Test signals when Update() should complete
+	UpdateDoneChan     chan struct{} // Signals when Update() actually completes
 }
 
 // NewMockKeyValue creates a new MockKeyValue instance
 func NewMockKeyValue() *MockKeyValue {
 	return &MockKeyValue{
-		data: make(map[string]*mockEntry),
-		rev:  0,
+		data:               make(map[string]*mockEntry),
+		rev:                0,
+		UpdateStartChan:    make(chan struct{}, 10), // Buffered to avoid blocking
+		UpdateCompleteChan: make(chan struct{}, 10),
+		UpdateDoneChan:     make(chan struct{}, 10),
 	}
 }
 
@@ -124,14 +133,26 @@ func (m *MockKeyValue) Create(key string, value []byte, opts ...KVOption) (uint6
 }
 
 func (m *MockKeyValue) Update(key string, value []byte, rev uint64, opts ...KVOption) (uint64, error) {
-	// Apply delay if set
+	// Signal that Update() has started (non-blocking)
+	select {
+	case m.UpdateStartChan <- struct{}{}:
+	default:
+	}
+
+	// Apply delay if set (deprecated - use channels in UpdateFunc instead)
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
 
 	// Custom function takes priority
 	if m.UpdateFunc != nil {
-		return m.UpdateFunc(key, value, rev, opts...)
+		result, err := m.UpdateFunc(key, value, rev, opts...)
+		// Signal completion (non-blocking)
+		select {
+		case m.UpdateDoneChan <- struct{}{}:
+		default:
+		}
+		return result, err
 	}
 
 	// Simple flag check
@@ -157,6 +178,12 @@ func (m *MockKeyValue) Update(key string, value []byte, rev uint64, opts ...KVOp
 	m.rev++
 	entry.Value = value
 	entry.Rev = m.rev
+
+	// Signal completion (non-blocking)
+	select {
+	case m.UpdateDoneChan <- struct{}{}:
+	default:
+	}
 
 	return m.rev, nil
 }
