@@ -8,25 +8,25 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Setup Tasks
 
-- [ ] **0.1** Review the documentation
+- [x] **0.1** Review the documentation
   - Read `docs/readme.md` to understand the project goals
   - Read `docs/design.md` to understand the architecture
   - Read `docs/plan.md` to see the implementation plan
   - **Learning**: Understand what leader election is and why we need it
 
-- [ ] **0.2** Set up Go workspace
+- [x] **0.2** Set up Go workspace
   - Verify Go is installed: `go version`
   - Initialize module if needed: `go mod tidy`
   - Create directory structure: `mkdir -p leader internal/natsmock examples`
   - **Learning**: Understand Go module structure and package organization
 
-- [ ] **0.3** Set up development tools
+- [x] **0.3** Set up development tools
   - Install `golangci-lint`: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
   - Set up your IDE/editor (VS Code, GoLand, etc.)
   - Configure Go formatting on save
   - **Learning**: Good development practices and tooling
 
-- [ ] **0.4** Set up NATS for testing
+- [x] **0.4** Set up NATS for testing
   - Install NATS server: `go install github.com/nats-io/nats-server/v2@latest`
   - Test NATS server: `nats-server -js` (JetStream enabled)
   - Create a simple test script to verify NATS connection
@@ -44,67 +44,67 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 1: Define Core Types and Interfaces
 
-- [ ] **1.1** Create `leader/errors.go`
+- [x] **1.1** Create `leader/errors.go`
   - Define custom error types: `ErrNotLeader`, `ErrElectionFailed`, etc.
   - **Learning**: Error handling patterns in Go, custom error types
 
-- [ ] **1.2** Create `leader/election.go` - Part 1: Interfaces
+- [x] **1.2** Create `leader/election.go` - Part 1: Interfaces
   - Define `Election` interface with all methods
   - Define `ElectionConfig` struct with required fields
   - Add basic documentation comments
   - **Learning**: Interface design, API design principles
 
-- [ ] **1.3** Create `leader/election.go` - Part 2: Configuration
+- [x] **1.3** Create `leader/election.go` - Part 2: Configuration
   - Add optional fields to `ElectionConfig`
   - Create helper types: `FencingConfig`, `RetryConfig`, `StopOptions`
   - Add `ElectionStatus` struct
   - **Learning**: Configuration patterns, optional parameters
 
-- [ ] **1.4** Write tests for configuration validation
+- [x] **1.4** Write tests for configuration validation
   - Create `leader/election_test.go`
   - Test invalid configurations (TTL too short, empty InstanceID, etc.)
   - **Learning**: Test-driven development, validation logic
 
 ### Step 2: Create Mock Infrastructure for Testing
 
-- [ ] **2.1** Create `internal/natsmock/keyvalue.go`
+- [x] **2.1** Create `internal/natsmock/keyvalue.go`
   - Create mock `KeyValue` interface implementation
   - Implement `Create`, `Update`, `Get`, `Watch`, `Delete` methods
   - Add ability to simulate failures and delays
   - **Learning**: Mocking patterns, interface implementation
 
-- [ ] **2.2** Create `internal/natsmock/connection.go`
+- [x] **2.2** Create `internal/natsmock/connection.go`
   - Create mock `Conn` interface implementation
   - Implement connection status tracking
   - Add ability to simulate disconnections
   - **Learning**: Mocking network connections, state simulation
 
-- [ ] **2.3** Write tests for mocks
+- [x] **2.3** Write tests for mocks
   - Test mock behavior matches real NATS behavior
   - Test failure scenarios
   - **Learning**: Testing mocks, ensuring mock accuracy
 
 ### Step 3: Implement Core Election Logic
 
-- [ ] **3.1** Create `leader/kv_election.go` - Part 1: Structure
+- [x] **3.1** Create `leader/kv_election.go` - Part 1: Structure
   - Create `kvElection` struct with all fields
   - Implement `NewElection` constructor
   - Add configuration validation
   - **Learning**: Struct design, constructor patterns, validation
 
-- [ ] **3.2** Implement `Start()` method
+- [x] **3.2** Implement `Start()` method
   - Initialize NATS KV connection
   - Create or get KV bucket
   - Set up initial state
   - **Learning**: Initialization patterns, error handling
 
-- [ ] **3.3** Implement `attemptAcquire()` method
+- [x] **3.3** Implement `attemptAcquire()` method
   - Try to create the leadership key
   - Handle success (become leader) and failure (become follower)
   - Generate fencing token
   - **Learning**: Atomic operations, state transitions, UUID generation
 
-- [ ] **3.4** Write tests for `attemptAcquire()`
+- [x] **3.4** Write tests for `attemptAcquire()`
   - Test successful acquisition
   - Test failure when key exists
   - Test concurrent attempts
@@ -112,24 +112,24 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 4: Implement Heartbeat Mechanism
 
-- [ ] **4.1** Create `leader/heartbeat.go` - Part 1: Structure
+- [x] **4.1** Create `leader/heartbeat.go` - Part 1: Structure
   - Create heartbeat loop function
   - Set up ticker for periodic heartbeats
   - **Learning**: Goroutines, tickers, background tasks
 
-- [ ] **4.2** Implement heartbeat update logic
+- [x] **4.2** Implement heartbeat update logic
   - Use `kv.Update()` with expected revision
   - Handle revision mismatches (demotion)
   - Update revision tracking
   - **Learning**: Conditional updates, revision tracking, conflict detection
 
-- [ ] **4.3** Add error handling to heartbeat
+- [x] **4.3** Add error handling to heartbeat
   - Classify errors (transient vs permanent)
   - Handle timeouts
   - Implement failure counting
   - **Learning**: Error classification, retry logic
 
-- [ ] **4.4** Write tests for heartbeat
+- [x] **4.4** Write tests for heartbeat
   - Test successful heartbeats
   - Test revision mismatch (demotion)
   - Test timeout scenarios
@@ -159,15 +159,21 @@ This is your step-by-step learning guide. Work through each task in order, under
   - Test multiple followers competing
   - **Learning**: Testing async behavior, timing-sensitive code
 
+- [ ] **5.5** Prevent multiple watcher goroutines (Code Quality)
+  - Add flag to track if watcher is already running
+  - Prevent race condition when `becomeFollower()` is called multiple times
+  - Ensure only one watcher loop runs per election instance
+  - **Learning**: Race condition prevention, goroutine lifecycle management
+
 ### Step 6: Implement Callbacks and State Management
 
-- [ ] **6.1** Implement `OnPromote()` and `OnDemote()` callbacks
+- [x] **6.1** Implement `OnPromote()` and `OnDemote()` callbacks
   - Store callback functions
   - Call callbacks at appropriate times
   - Handle callback errors gracefully
   - **Learning**: Callback patterns, function types, error handling
 
-- [ ] **6.2** Implement state management
+- [x] **6.2** Implement state management
   - Use atomic operations for `IsLeader()`
   - Track current leader ID
   - Track current token
@@ -243,7 +249,9 @@ This is your step-by-step learning guide. Work through each task in order, under
 - [ ] **9.1** Create `leader/retry.go` - Part 1: Error Classification
   - Implement error classification (transient vs permanent)
   - Create error type checking functions
-  - **Learning**: Error analysis, error categorization
+  - Improve error wrapping to support Go 1.13+ `errors.Is()` and `errors.As()`
+  - Make custom errors (like `timeoutError`) compatible with error wrapping conventions
+  - **Learning**: Error analysis, error categorization, error wrapping patterns
 
 - [ ] **9.2** Implement exponential backoff
   - Create backoff calculation function
@@ -270,6 +278,13 @@ This is your step-by-step learning guide. Work through each task in order, under
   - Validate required fields
   - Validate timeout relationships
   - **Learning**: Input validation, constraint checking
+
+- [ ] **10.4** Implement TTL support in KV operations (Enhancement)
+  - Add TTL support to `KeyValue` interface `Create()` method
+  - Use `nats.WithMaxAge()` option when creating leadership key
+  - Implement TTL in mock KeyValue for testing
+  - Ensure TTL is properly set based on `ElectionConfig.TTL`
+  - **Learning**: NATS KV TTL options, key expiration, testing with TTL
 
 - [ ] **10.2** Add validation to constructor
   - Call validation in `NewElection()`
@@ -304,7 +319,9 @@ This is your step-by-step learning guide. Work through each task in order, under
 - [ ] **12.1** Implement `StopWithContext()` method
   - Accept context with timeout
   - Accept `StopOptions` for configuration
-  - **Learning**: Context patterns, timeout handling, options pattern
+  - Ensure context is properly propagated to callbacks
+  - Verify callback contexts are cancelled when election stops
+  - **Learning**: Context patterns, timeout handling, options pattern, context propagation
 
 - [ ] **12.2** Implement key deletion on stop
   - Optionally delete leadership key
@@ -334,7 +351,9 @@ This is your step-by-step learning guide. Work through each task in order, under
   - Log state transitions
   - Log errors with context
   - Log important events
-  - **Learning**: Where and how to log, log levels
+  - Integrate existing logger interface from `utils/logger`
+  - Add strategic log points in election lifecycle (start, stop, promote, demote)
+  - **Learning**: Where and how to log, log levels, logger integration
 
 - [ ] **13.3** Create `leader/metrics.go` - Part 1: Structure
   - Define metrics interface
@@ -445,7 +464,9 @@ This is your step-by-step learning guide. Work through each task in order, under
 - [ ] **18.2** Review code for improvements
   - Look for code smells
   - Refactor if needed
-  - **Learning**: Code review, refactoring
+  - Consolidate test helpers (`waitForCondition`, `waitForLeader`, `waitForHeartbeat`) into shared test helper file
+  - Extract mock adapter code (`mockKeyValueAdapter`, `mockJetStreamAdapter`, `mockConnAdapter`) to reusable test helper package
+  - **Learning**: Code review, refactoring, test code organization, DRY principles
 
 - [ ] **18.3** Add performance benchmarks
   - Create benchmark tests
@@ -543,14 +564,14 @@ As you work through each step, refer to these resources:
 
 Track your progress here:
 
-- Phase 0: ___/5 tasks completed
-- Phase 1: ___/18 tasks completed
-- Phase 2: ___/21 tasks completed
-- Phase 3: ___/9 tasks completed
-- Phase 4: ___/9 tasks completed
-- Phase 5: ___/3 tasks completed
+- Phase 0: 4/5 tasks completed (0.5 pending - CI/CD skeleton)
+- Phase 1: 16/19 tasks completed (Steps 1-4 complete, Step 5-6 in progress)
+- Phase 2: 0/22 tasks completed (includes new enhancement tasks)
+- Phase 3: 0/9 tasks completed
+- Phase 4: 0/9 tasks completed
+- Phase 5: 0/3 tasks completed
 
-**Total: ___/65 tasks completed**
+**Total: 20/67 tasks completed** (2 new enhancement tasks added)
 
 ---
 
