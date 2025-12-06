@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,30 +22,34 @@ const (
 	StateStopped   = "STOPPED"
 )
 
-// kvElection is the internal implementation of Election interface.
+const (
+	jitterMin   = 10 * time.Millisecond
+	jitterMax   = 100 * time.Millisecond
+	maxRetries  = 3
+	baseBackoff = 50 * time.Millisecond
+	maxBackoff  = 5 * time.Second
+	jitter      = 0.1
+)
+
 type kvElection struct {
 	cfg ElectionConfig
 	nc  JetStreamProvider
 	kv  KeyValue
-	key string // Full key path: cfg.Group
+	key string
 
-	// State (thread-safe)
 	isLeader atomic.Bool
-	leaderID atomic.Value // string
-	token    atomic.Value // string
+	leaderID atomic.Value
+	token    atomic.Value
 	revision atomic.Uint64
-	state    atomic.Value // string
-	mu       sync.RWMutex // Protects non-atomic fields
+	state    atomic.Value
+	mu       sync.RWMutex
 
-	// Timing
-	lastHeartbeat  atomic.Value // time.Time
-	lastTransition atomic.Value // time.Time
+	lastHeartbeat  atomic.Value
+	lastTransition atomic.Value
 
-	// Context management (set in Start(), not constructor)
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// Callbacks
 	onPromote func(ctx context.Context, token string)
 	onDemote  func()
 }
@@ -59,8 +64,6 @@ func newKVElection(nc JetStreamProvider, cfg ElectionConfig) (*kvElection, error
 		return nil, fmt.Errorf("failed to get JetStream: %w", err)
 	}
 
-	// Get existing KV bucket (don't create - bucket should already exist)
-	// TODO: In Phase 2, add BucketAutoCreate option
 	kv, err := js.KeyValue(cfg.Bucket)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get KV bucket %s: %w", cfg.Bucket, err)
@@ -97,14 +100,63 @@ func (e *kvElection) Start(ctx context.Context) error {
 	e.state.Store(StateCandidate)
 	e.lastTransition.Store(time.Now())
 
-	go e.attemptAcquire()
+	go func() {
+		if err := e.attemptAcquire(); err != nil {
+			e.becomeFollower()
+		}
+	}()
 
 	return nil
 }
 
-// attemptAcquire tries to acquire leadership by creating the key.
-// This is called in a goroutine from Start().
-func (e *kvElection) attemptAcquire() {
+// attemptAcquireWithRetry attempts to acquire leadership with jitter and exponential backoff.
+func (e *kvElection) attemptAcquireWithRetry(ctx context.Context) {
+	jitterRange := jitterMax - jitterMin
+	initialJitter := jitterMin + time.Duration(rand.Float64()*float64(jitterRange))
+
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(initialJitter):
+	}
+
+	for retry := 0; retry <= maxRetries; retry++ {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		err := e.attemptAcquire()
+		if err == nil {
+			return
+		}
+
+		if retry == maxRetries {
+			e.becomeFollower()
+			return
+		}
+
+		backoff := baseBackoff * time.Duration(1<<uint(retry))
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+
+		jitterAmount := time.Duration(float64(backoff) * jitter * (rand.Float64()*2 - 1))
+		finalBackoff := backoff + jitterAmount
+		if finalBackoff < 0 {
+			finalBackoff = backoff
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(finalBackoff):
+		}
+	}
+}
+
+func (e *kvElection) attemptAcquire() error {
 	token := uuid.New().String()
 
 	payload := map[string]interface{}{
@@ -113,20 +165,16 @@ func (e *kvElection) attemptAcquire() {
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		// This should never happen, but if it does, become follower
-		// TODO: Add proper logging when logger is integrated
-		e.becomeFollower()
-		return
+		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	// TODO: Add TTL support (nats.WithMaxAge) in next step
 	rev, err := e.kv.Create(e.key, payloadBytes)
 	if err != nil {
-		e.becomeFollower()
-		return
+		return err
 	}
 
 	e.becomeLeader(token, rev)
+	return nil
 }
 
 func (e *kvElection) becomeLeader(token string, rev uint64) {
@@ -156,11 +204,11 @@ func (e *kvElection) becomeFollower() {
 	e.state.Store(StateFollower)
 	e.lastTransition.Store(time.Now())
 
-	// TODO: Start watcher to monitor for leader changes (Step 5)
-	// go e.watchLoop()
+	if e.ctx != nil {
+		go e.watchLoop(e.ctx)
+	}
 }
 
-// Stop stops the election
 func (e *kvElection) Stop() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -169,7 +217,6 @@ func (e *kvElection) Stop() error {
 		return ErrAlreadyStopped
 	}
 
-	// Check if we were leader BEFORE clearing state
 	wasLeader := e.isLeader.Load()
 
 	if e.cancel != nil {
@@ -180,7 +227,6 @@ func (e *kvElection) Stop() error {
 	e.state.Store(StateStopped)
 	e.lastTransition.Store(time.Now())
 
-	// Call onDemote if we were leader
 	if e.onDemote != nil && wasLeader {
 		e.onDemote()
 	}
@@ -188,12 +234,10 @@ func (e *kvElection) Stop() error {
 	return nil
 }
 
-// StopWithContext stops the election with a context
 func (e *kvElection) StopWithContext(ctx context.Context) error {
-	return e.Stop() // TODO: Implement timeout logic in Phase 2
+	return e.Stop()
 }
 
-// Status returns the current election status
 func (e *kvElection) Status() ElectionStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -244,12 +288,10 @@ func (e *kvElection) Status() ElectionStatus {
 	}
 }
 
-// IsLeader returns true if this instance is the leader
 func (e *kvElection) IsLeader() bool {
 	return e.isLeader.Load()
 }
 
-// LeaderID returns the current leader's instance ID
 func (e *kvElection) LeaderID() string {
 	if id := e.leaderID.Load(); id != nil {
 		return id.(string)
@@ -257,7 +299,6 @@ func (e *kvElection) LeaderID() string {
 	return ""
 }
 
-// Token returns the current fencing token if leader
 func (e *kvElection) Token() string {
 	if t := e.token.Load(); t != nil {
 		return t.(string)
@@ -265,14 +306,12 @@ func (e *kvElection) Token() string {
 	return ""
 }
 
-// OnPromote registers a callback for when this instance becomes leader
 func (e *kvElection) OnPromote(fn func(ctx context.Context, token string)) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.onPromote = fn
 }
 
-// OnDemote registers a callback for when this instance loses leadership
 func (e *kvElection) OnDemote(fn func()) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

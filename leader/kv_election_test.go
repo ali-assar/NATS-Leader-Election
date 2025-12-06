@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestAttemptAcquire_Success tests that attemptAcquire succeeds when key doesn't exist
 func TestAttemptAcquire_Success(t *testing.T) {
 	cfg := ElectionConfig{
 		Bucket:            "leaders",
@@ -25,20 +24,16 @@ func TestAttemptAcquire_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, election)
 
-	// Start the election
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	// Wait for attemptAcquire to complete (runs in goroutine)
 	waitForLeader(t, election, true, 1*time.Second)
 
-	// Check that we became leader
 	assert.True(t, election.IsLeader(), "Expected to be leader")
 	assert.Equal(t, "instance-1", election.LeaderID())
 	assert.NotEmpty(t, election.Token(), "Expected to have a token")
 }
 
-// TestAttemptAcquire_KeyExists tests that attemptAcquire fails when key already exists
 func TestAttemptAcquire_KeyExists(t *testing.T) {
 	cfg := ElectionConfig{
 		Bucket:            "leaders",
@@ -49,30 +44,25 @@ func TestAttemptAcquire_KeyExists(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	// Pre-create the key (simulate another instance is already leader)
 	js, _ := nc.JetStream()
 	kv, _ := js.KeyValue("leaders")
 	payload := []byte(`{"id":"other-instance","token":"existing-token"}`)
 	_, err := kv.Create("test-group", payload)
 	assert.NoError(t, err)
 
-	// Now try to start election
 	election, err := NewElection(newMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	// Wait for attemptAcquire to complete
 	waitForLeader(t, election, false, 1*time.Second)
 
-	// Check that we did NOT become leader
 	assert.False(t, election.IsLeader(), "Expected NOT to be leader")
 	assert.Empty(t, election.LeaderID())
 	assert.Empty(t, election.Token())
 }
 
-// TestAttemptAcquire_Concurrent tests that only one instance becomes leader when multiple try simultaneously
 func TestAttemptAcquire_Concurrent(t *testing.T) {
 	cfg1 := ElectionConfig{
 		Bucket:            "leaders",
@@ -306,16 +296,82 @@ func (a *mockKeyValueAdapter) Update(key string, value []byte, rev uint64, opts 
 	return a.kv.Update(key, value, rev)
 }
 
-func (a *mockKeyValueAdapter) Get(key string) (interface{}, error) {
-	return a.kv.Get(key)
+func (a *mockKeyValueAdapter) Get(key string) (Entry, error) {
+	mockEntry, err := a.kv.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	if mockEntry == nil {
+		return nil, nil
+	}
+	return &mockEntryAdapter{entry: mockEntry}, nil
 }
 
 func (a *mockKeyValueAdapter) Delete(key string) error {
 	return a.kv.Delete(key)
 }
 
-func (a *mockKeyValueAdapter) Watch(key string, opts ...interface{}) (interface{}, error) {
-	return a.kv.Watch(key)
+func (a *mockKeyValueAdapter) Watch(key string, opts ...interface{}) (Watcher, error) {
+	mockWatcher, err := a.kv.Watch(key)
+	if err != nil {
+		return nil, err
+	}
+	return &mockWatcherAdapter{watcher: mockWatcher}, nil
+}
+
+// mockEntryAdapter adapts natsmock.Entry to our Entry interface
+type mockEntryAdapter struct {
+	entry natsmock.Entry
+}
+
+func (a *mockEntryAdapter) Key() string {
+	return a.entry.Key()
+}
+
+func (a *mockEntryAdapter) Value() []byte {
+	return a.entry.Value()
+}
+
+func (a *mockEntryAdapter) Revision() uint64 {
+	return a.entry.Revision()
+}
+
+// mockWatcherAdapter adapts natsmock.Watcher to our Watcher interface
+type mockWatcherAdapter struct {
+	watcher   natsmock.Watcher
+	entryChan chan Entry
+	once      sync.Once
+	initChan  chan struct{}
+}
+
+func (a *mockWatcherAdapter) Updates() <-chan Entry {
+	// Initialize the channel and goroutine only once
+	// This ensures that even if Updates() is called multiple times (which shouldn't happen
+	// but could due to race conditions), only one goroutine is created per watcher instance.
+	// This matches the behavior of real NATS where Updates() returns the same channel.
+	a.once.Do(func() {
+		a.entryChan = make(chan Entry, 10)
+		a.initChan = make(chan struct{})
+		go func() {
+			defer close(a.entryChan)
+			close(a.initChan) // Signal that goroutine is ready
+			for mockEntry := range a.watcher.Updates() {
+				if mockEntry != nil {
+					a.entryChan <- &mockEntryAdapter{entry: mockEntry}
+				} else {
+					// nil entry means key was deleted
+					a.entryChan <- nil
+				}
+			}
+		}()
+		// Wait for goroutine to be ready
+		<-a.initChan
+	})
+	return a.entryChan
+}
+
+func (a *mockWatcherAdapter) Stop() {
+	a.watcher.Stop()
 }
 
 // mockJetStreamAdapter adapts *natsmock.MockJetStream to leader.JetStreamContext interface

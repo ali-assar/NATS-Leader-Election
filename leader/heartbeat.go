@@ -7,12 +7,10 @@ import (
 	"time"
 )
 
-// heartbeatLoop runs in a goroutine and periodically updates the leadership key
-// to keep the TTL alive. It stops when the context is cancelled or if we're no longer leader.
+// heartbeatLoop periodically updates the leadership key to keep the TTL alive.
 func (e *kvElection) heartbeatLoop(ctx context.Context) {
-	// Create a ticker that fires every HeartbeatInterval
 	ticker := time.NewTicker(e.cfg.HeartbeatInterval)
-	defer ticker.Stop() // Always stop the ticker when function exits
+	defer ticker.Stop()
 
 	consecutiveFailures := 0
 	maxFailures := 3
@@ -23,12 +21,9 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if !e.IsLeader() {
-				// We're not leader anymore, reset failures and exit
-				consecutiveFailures = 0
 				return
 			}
 
-			// TODO: Step 4.2 - Implement the actual heartbeat update logic here
 			currentRev := e.revision.Load()
 
 			token := e.Token()
@@ -46,8 +41,7 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 				continue
 			}
 
-			// Since KeyValue interface doesn't support context, we use a goroutine + channel pattern
-			updateTimeout := e.cfg.HeartbeatInterval / 2 // Timeout is half of heartbeat interval
+			updateTimeout := e.cfg.HeartbeatInterval / 2
 			if updateTimeout < 1*time.Second {
 				updateTimeout = 1 * time.Second
 			}
@@ -105,7 +99,6 @@ func (e *timeoutError) Error() string {
 }
 
 // isPermanentError classifies errors as permanent (demote immediately) vs transient (retry).
-// Permanent errors indicate we've lost leadership or access.
 func isPermanentError(err error) bool {
 	if err == nil {
 		return false
@@ -113,12 +106,11 @@ func isPermanentError(err error) bool {
 
 	errMsg := strings.ToLower(err.Error())
 
-	// Permanent errors - demote immediately
 	permanentPatterns := []string{
-		"revision mismatch", // Someone else updated the key
-		"key not found",     // Key was deleted
-		"permission denied", // Access revoked
-		"bucket not found",  // Bucket was deleted
+		"revision mismatch",
+		"key not found",
+		"permission denied",
+		"bucket not found",
 	}
 
 	for _, pattern := range permanentPatterns {
@@ -127,8 +119,6 @@ func isPermanentError(err error) bool {
 		}
 	}
 
-	// Transient errors - retry
-	// Examples: timeout, connection lost, temporary failure, deadline exceeded
 	transientPatterns := []string{
 		"timeout",
 		"deadline exceeded",
@@ -138,20 +128,16 @@ func isPermanentError(err error) bool {
 
 	for _, pattern := range transientPatterns {
 		if strings.Contains(errMsg, pattern) {
-			return false // Transient, not permanent
+			return false
 		}
 	}
 
-	// Default: treat unknown errors as transient (safer to retry)
 	return false
 }
 
-// handleHeartbeatFailure handles permanent heartbeat failures by demoting the leader.
 func (e *kvElection) handleHeartbeatFailure(err error) {
-	// Demote to follower
 	e.becomeFollower()
 
-	// Call onDemote callback if set
 	e.mu.RLock()
 	onDemote := e.onDemote
 	e.mu.RUnlock()

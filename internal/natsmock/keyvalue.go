@@ -26,16 +26,15 @@ type mockEntry struct {
 	Rev   uint64
 }
 
-// mockEntryImpl implements Entry interface
-type mockEntryImpl struct {
-	key   string
-	value []byte
-	rev   uint64
+type MockEntryImpl struct {
+	KeyVal   string
+	ValueVal []byte
+	RevVal   uint64
 }
 
-func (e *mockEntryImpl) Key() string      { return e.key }
-func (e *mockEntryImpl) Value() []byte    { return e.value }
-func (e *mockEntryImpl) Revision() uint64 { return e.rev }
+func (e *MockEntryImpl) Key() string      { return e.KeyVal }
+func (e *MockEntryImpl) Value() []byte    { return e.ValueVal }
+func (e *MockEntryImpl) Revision() uint64 { return e.RevVal }
 
 // Watcher represents a KeyValue watcher
 type Watcher interface {
@@ -43,14 +42,16 @@ type Watcher interface {
 	Stop()
 }
 
-// mockWatcher is a simple watcher implementation
-type mockWatcher struct {
-	updates chan Entry
-	stop    chan struct{}
+type MockWatcher struct {
+	UpdatesChan chan Entry
+	StopChan    chan struct{}
 }
 
-func (w *mockWatcher) Updates() <-chan Entry { return w.updates }
-func (w *mockWatcher) Stop()                 { close(w.stop) }
+func (w *MockWatcher) Updates() <-chan Entry { return w.UpdatesChan }
+
+func (w *MockWatcher) Stop() {
+	close(w.StopChan)
+}
 
 type MockKeyValue struct {
 	data map[string]*mockEntry
@@ -74,54 +75,69 @@ type MockKeyValue struct {
 	// Advanced: Delay simulation (deprecated - use channels instead)
 	delay time.Duration
 
-	// Channel-based coordination for testing
-	// These channels allow tests to control timing deterministically
-	UpdateStartChan    chan struct{} // Signals when Update() starts
-	UpdateCompleteChan chan struct{} // Test signals when Update() should complete
-	UpdateDoneChan     chan struct{} // Signals when Update() actually completes
+	UpdateStartChan    chan struct{}
+	UpdateCompleteChan chan struct{}
+	UpdateDoneChan     chan struct{}
+	CreateStartChan    chan struct{}
+	CreateDoneChan     chan struct{}
+	WatchStartChan     chan struct{}
 }
 
-// NewMockKeyValue creates a new MockKeyValue instance
 func NewMockKeyValue() *MockKeyValue {
 	return &MockKeyValue{
 		data:               make(map[string]*mockEntry),
 		rev:                0,
-		UpdateStartChan:    make(chan struct{}, 10), // Buffered to avoid blocking
+		UpdateStartChan:    make(chan struct{}, 10),
 		UpdateCompleteChan: make(chan struct{}, 10),
 		UpdateDoneChan:     make(chan struct{}, 10),
+		CreateStartChan:    make(chan struct{}, 10),
+		CreateDoneChan:     make(chan struct{}, 10),
+		WatchStartChan:     make(chan struct{}, 10),
 	}
 }
 
 func (m *MockKeyValue) Create(key string, value []byte, opts ...KVOption) (uint64, error) {
-	// Apply delay if set
+	select {
+	case m.CreateStartChan <- struct{}{}:
+	default:
+	}
+
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
 
-	// Custom function takes priority
 	if m.CreateFunc != nil {
-		return m.CreateFunc(key, value, opts...)
+		result, err := m.CreateFunc(key, value, opts...)
+		select {
+		case m.CreateDoneChan <- struct{}{}:
+		default:
+		}
+		return result, err
 	}
 
-	// Simple flag check
 	if m.failCreate {
+		select {
+		case m.CreateDoneChan <- struct{}{}:
+		default:
+		}
 		return 0, errors.New("create failed")
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Initialize map if needed (defensive)
 	if m.data == nil {
 		m.data = make(map[string]*mockEntry)
 	}
 
-	// Check if key already exists (NATS behavior)
 	if _, exists := m.data[key]; exists {
+		select {
+		case m.CreateDoneChan <- struct{}{}:
+		default:
+		}
 		return 0, errors.New("key already exists")
 	}
 
-	// Increment revision and create entry
 	m.rev++
 	m.data[key] = &mockEntry{
 		key:   key,
@@ -129,25 +145,26 @@ func (m *MockKeyValue) Create(key string, value []byte, opts ...KVOption) (uint6
 		Rev:   m.rev,
 	}
 
+	select {
+	case m.CreateDoneChan <- struct{}{}:
+	default:
+	}
+
 	return m.rev, nil
 }
 
 func (m *MockKeyValue) Update(key string, value []byte, rev uint64, opts ...KVOption) (uint64, error) {
-	// Signal that Update() has started (non-blocking)
 	select {
 	case m.UpdateStartChan <- struct{}{}:
 	default:
 	}
 
-	// Apply delay if set (deprecated - use channels in UpdateFunc instead)
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
 
-	// Custom function takes priority
 	if m.UpdateFunc != nil {
 		result, err := m.UpdateFunc(key, value, rev, opts...)
-		// Signal completion (non-blocking)
 		select {
 		case m.UpdateDoneChan <- struct{}{}:
 		default:
@@ -155,7 +172,6 @@ func (m *MockKeyValue) Update(key string, value []byte, rev uint64, opts ...KVOp
 		return result, err
 	}
 
-	// Simple flag check
 	if m.failUpdate {
 		return 0, errors.New("update failed")
 	}
@@ -163,23 +179,19 @@ func (m *MockKeyValue) Update(key string, value []byte, rev uint64, opts ...KVOp
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check if key exists
 	entry, exists := m.data[key]
 	if !exists {
 		return 0, errors.New("key not found")
 	}
 
-	// Check revision matches (optimistic concurrency)
 	if entry.Rev != rev {
 		return 0, errors.New("revision mismatch")
 	}
 
-	// Update entry and increment revision
 	m.rev++
 	entry.Value = value
 	entry.Rev = m.rev
 
-	// Signal completion (non-blocking)
 	select {
 	case m.UpdateDoneChan <- struct{}{}:
 	default:
@@ -189,17 +201,14 @@ func (m *MockKeyValue) Update(key string, value []byte, rev uint64, opts ...KVOp
 }
 
 func (m *MockKeyValue) Get(key string) (Entry, error) {
-	// Apply delay if set
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
 
-	// Custom function takes priority
 	if m.GetFunc != nil {
 		return m.GetFunc(key)
 	}
 
-	// Simple flag check
 	if m.failGet {
 		return nil, errors.New("get failed")
 	}
@@ -207,32 +216,27 @@ func (m *MockKeyValue) Get(key string) (Entry, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Check if key exists
 	entry, exists := m.data[key]
 	if !exists {
 		return nil, errors.New("key not found")
 	}
 
-	// Return Entry interface implementation
-	return &mockEntryImpl{
-		key:   key,
-		value: entry.Value,
-		rev:   entry.Rev,
+	return &MockEntryImpl{
+		KeyVal:   key,
+		ValueVal: entry.Value,
+		RevVal:   entry.Rev,
 	}, nil
 }
 
 func (m *MockKeyValue) Delete(key string) error {
-	// Apply delay if set
 	if m.delay > 0 {
 		time.Sleep(m.delay)
 	}
 
-	// Custom function takes priority
 	if m.DeleteFunc != nil {
 		return m.DeleteFunc(key)
 	}
 
-	// Simple flag check
 	if m.failDelete {
 		return errors.New("delete failed")
 	}
@@ -240,24 +244,25 @@ func (m *MockKeyValue) Delete(key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check if key exists
 	if _, exists := m.data[key]; !exists {
 		return errors.New("key not found")
 	}
 
-	// Delete the key
 	delete(m.data, key)
 
 	return nil
 }
 
 func (m *MockKeyValue) Watch(key string, opts ...WatchOption) (Watcher, error) {
-	// Custom function takes priority
+	select {
+	case m.WatchStartChan <- struct{}{}:
+	default:
+	}
+
 	if m.WatchFunc != nil {
 		return m.WatchFunc(key, opts...)
 	}
 
-	// Simple flag check
 	if m.failWatch {
 		return nil, errors.New("watch failed")
 	}
@@ -265,23 +270,20 @@ func (m *MockKeyValue) Watch(key string, opts ...WatchOption) (Watcher, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Create a simple watcher that sends current state
-	watcher := &mockWatcher{
-		updates: make(chan Entry, 1),
-		stop:    make(chan struct{}),
+	watcher := &MockWatcher{
+		UpdatesChan: make(chan Entry, 1),
+		StopChan:    make(chan struct{}),
 	}
 
-	// If key exists, send current entry
 	if entry, exists := m.data[key]; exists {
-		watcher.updates <- &mockEntryImpl{
-			key:   key,
-			value: entry.Value,
-			rev:   entry.Rev,
+		watcher.UpdatesChan <- &MockEntryImpl{
+			KeyVal:   key,
+			ValueVal: entry.Value,
+			RevVal:   entry.Rev,
 		}
 	}
 
-	// Close channel to indicate no more updates for now
-	close(watcher.updates)
+	close(watcher.UpdatesChan)
 
 	return watcher, nil
 }

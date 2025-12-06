@@ -32,8 +32,6 @@ func (e *ElectionError) Unwrap() error {
 	return e.Err
 }
 
-// NewElectionError creates a new ElectionError with the given code and underlying error.
-// It's a convenience function for creating structured errors.
 func NewElectionError(code string, instanceID string, reason string, err error) *ElectionError {
 	return &ElectionError{
 		Code:       code,
