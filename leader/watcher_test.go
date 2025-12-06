@@ -911,13 +911,11 @@ func TestJitterAndBackoffBehavior(t *testing.T) {
 	drainChannel(mockKV.CreateStartChan)
 	drainChannel(mockKV.CreateDoneChan)
 
-	// Send nil entry to trigger re-election
+	// Send nil entry to trigger re-election and measure time from here
+	startTime := time.Now()
 	updatesChan <- nil
 
-	time.Sleep(20 * time.Millisecond)
-
 	// First attempt should happen after jitter (10-100ms)
-	startTime := time.Now()
 	select {
 	case <-mockKV.CreateStartChan:
 		elapsed := time.Since(startTime)
@@ -939,7 +937,7 @@ func TestJitterAndBackoffBehavior(t *testing.T) {
 	// Second attempt should happen after backoff
 	// Note: The backoff calculation is: baseBackoff * 2^retry with jitter
 	// For retry=0: baseBackoff (50ms) ± 10% jitter = 45-55ms
-	// We'll wait for it with a reasonable timeout
+	// We verify that a second attempt happens (backoff is working)
 	select {
 	case <-mockKV.CreateStartChan:
 		// Second attempt started - backoff worked

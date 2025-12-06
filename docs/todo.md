@@ -179,7 +179,7 @@ This is your step-by-step learning guide. Work through each task in order, under
   - Track current token
   - **Learning**: Atomic operations, thread-safe state, race conditions
 
-- [ ] **6.3** Implement `Stop()` method
+- [x] **6.3** Implement `Stop()` method
   - Cancel all goroutines
   - Clean up resources
   - Handle graceful shutdown
