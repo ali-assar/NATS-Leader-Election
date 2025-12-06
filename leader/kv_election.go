@@ -47,6 +47,10 @@ type kvElection struct {
 	lastHeartbeat  atomic.Value
 	lastTransition atomic.Value
 
+	watcherRunning atomic.Bool
+
+	wg sync.WaitGroup
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -100,7 +104,9 @@ func (e *kvElection) Start(ctx context.Context) error {
 	e.state.Store(StateCandidate)
 	e.lastTransition.Store(time.Now())
 
+	e.wg.Add(1)
 	go func() {
+		defer e.wg.Done()
 		if err := e.attemptAcquire(); err != nil {
 			e.becomeFollower()
 		}
@@ -189,10 +195,23 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 	e.lastHeartbeat.Store(time.Now())
 	e.lastTransition.Store(time.Now())
 
-	go e.heartbeatLoop(e.ctx)
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		e.heartbeatLoop(e.ctx)
+	}()
 
 	if e.onPromote != nil {
-		go e.onPromote(e.ctx, token)
+		e.wg.Add(1)
+		go func() {
+			defer e.wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					// Panic occurred in user callback - log it when logger is integrated
+				}
+			}()
+			e.onPromote(e.ctx, token)
+		}()
 	}
 }
 
@@ -204,16 +223,22 @@ func (e *kvElection) becomeFollower() {
 	e.state.Store(StateFollower)
 	e.lastTransition.Store(time.Now())
 
-	if e.ctx != nil {
-		go e.watchLoop(e.ctx)
+	if e.ctx != nil && !e.watcherRunning.Load() {
+		e.watcherRunning.Store(true)
+		e.wg.Add(1)
+		go func() {
+			defer e.watcherRunning.Store(false)
+			defer e.wg.Done()
+			e.watchLoop(e.ctx)
+		}()
 	}
 }
 
 func (e *kvElection) Stop() error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 
 	if e.ctx == nil {
+		e.mu.Unlock()
 		return ErrAlreadyStopped
 	}
 
@@ -226,8 +251,22 @@ func (e *kvElection) Stop() error {
 	e.isLeader.Store(false)
 	e.state.Store(StateStopped)
 	e.lastTransition.Store(time.Now())
+	e.watcherRunning.Store(false)
 
-	if e.onDemote != nil && wasLeader {
+	e.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		e.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	}
+
+	if wasLeader && e.onDemote != nil {
 		e.onDemote()
 	}
 

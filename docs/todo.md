@@ -137,29 +137,29 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 5: Implement Watcher for Followers
 
-- [ ] **5.1** Create `leader/watcher.go` - Part 1: Structure
+- [x] **5.1** Create `leader/watcher.go` - Part 1: Structure
   - Create watcher loop function
   - Set up KV watch subscription
   - **Learning**: Event-driven programming, subscriptions
 
-- [ ] **5.2** Implement watch event handling
+- [x] **5.2** Implement watch event handling
   - Handle key deletion events
   - Handle key update events
   - Trigger re-election attempts
   - **Learning**: Event processing, state change detection
 
-- [ ] **5.3** Add jitter and backoff to watcher
+- [x] **5.3** Add jitter and backoff to watcher
   - Implement random jitter before re-election
   - Add exponential backoff for retries
   - **Learning**: Backoff algorithms, jitter patterns, thundering herd prevention
 
-- [ ] **5.4** Write tests for watcher
+- [x] **5.4** Write tests for watcher
   - Test watch event handling
   - Test jitter and backoff behavior
   - Test multiple followers competing
   - **Learning**: Testing async behavior, timing-sensitive code
 
-- [ ] **5.5** Prevent multiple watcher goroutines (Code Quality)
+- [x] **5.5** Prevent multiple watcher goroutines (Code Quality)
   - Add flag to track if watcher is already running
   - Prevent race condition when `becomeFollower()` is called multiple times
   - Ensure only one watcher loop runs per election instance
