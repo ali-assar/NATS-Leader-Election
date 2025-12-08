@@ -24,17 +24,25 @@ type Election interface {
 }
 
 type ElectionConfig struct {
-	Bucket             string
-	Group              string
-	InstanceID         string
-	TTL                time.Duration
-	HeartbeatInterval  time.Duration
-	Logger             logger.Logger
-	ValidationInterval time.Duration
+	Bucket                string
+	Group                 string
+	InstanceID            string
+	TTL                   time.Duration
+	HeartbeatInterval     time.Duration
+	Logger                logger.Logger
+	ValidationInterval    time.Duration
+	DisconnectGracePeriod time.Duration //if zero, uses default (3x HeartbeatInterval, minimum 5 seconds).
 }
 
 type JetStreamProvider interface {
 	JetStream() (JetStreamContext, error)
+}
+
+// NATSConnectionProvider provides access to the underlying NATS connection
+// for connection monitoring. This is optional - if not implemented,
+// connection monitoring will be disabled.
+type NATSConnectionProvider interface {
+	NATSConnection() *nats.Conn
 }
 
 type Entry interface {

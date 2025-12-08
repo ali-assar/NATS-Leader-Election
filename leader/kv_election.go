@@ -56,6 +56,10 @@ type kvElection struct {
 
 	onPromote func(ctx context.Context, token string)
 	onDemote  func()
+
+	// Connection monitoring
+	connectionMonitor ConnectionMonitor
+	disconnectHandler *disconnectHandler
 }
 
 func newKVElection(nc JetStreamProvider, cfg ElectionConfig) (*kvElection, error) {
@@ -88,6 +92,16 @@ func newKVElection(nc JetStreamProvider, cfg ElectionConfig) (*kvElection, error
 	e.lastHeartbeat.Store(time.Time{})
 	e.lastTransition.Store(time.Time{})
 
+	// Initialize connection monitor if NATS connection is available
+	if connProvider, ok := nc.(NATSConnectionProvider); ok {
+		if conn := connProvider.NATSConnection(); conn != nil {
+			e.connectionMonitor = NewNATSConnectionMonitor(conn)
+			e.disconnectHandler = &disconnectHandler{
+				election: e,
+			}
+		}
+	}
+
 	return e, nil
 }
 
@@ -100,6 +114,18 @@ func (e *kvElection) Start(ctx context.Context) error {
 	}
 
 	e.ctx, e.cancel = context.WithCancel(ctx)
+
+	// Start connection monitoring if available
+	if e.connectionMonitor != nil {
+		if err := e.connectionMonitor.Start(ctx); err != nil {
+			e.cancel()
+			return fmt.Errorf("failed to start connection monitor: %w", err)
+		}
+
+		// Register disconnect and reconnect handlers
+		e.connectionMonitor.OnDisconnect(e.disconnectHandler.handleDisconnect)
+		e.connectionMonitor.OnReconnect(e.handleReconnect)
+	}
 
 	e.state.Store(StateCandidate)
 	e.lastTransition.Store(time.Now())
@@ -262,7 +288,17 @@ func (e *kvElection) Stop() error {
 	e.lastTransition.Store(time.Now())
 	e.watcherRunning.Store(false)
 
+	// Stop disconnect handler timer
+	if e.disconnectHandler != nil {
+		e.disconnectHandler.stop()
+	}
+
 	e.mu.Unlock()
+
+	// Stop connection monitoring
+	if e.connectionMonitor != nil {
+		_ = e.connectionMonitor.Stop()
+	}
 
 	done := make(chan struct{})
 	go func() {

@@ -197,23 +197,23 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 7: Implement Fencing Tokens
 
-- [ ] **7.1** Create `leader/fencing.go` - Part 1: Token Management
+- [x] **7.1** Create `leader/fencing.go` - Part 1: Token Management
   - Implement token generation and storage
   - Implement token caching
   - **Learning**: Token-based security, caching strategies
 
-- [ ] **7.2** Implement periodic token validation
+- [x] **7.2** Implement periodic token validation
   - Create background validation loop
   - Validate token against KV store
   - Handle validation failures (demotion)
   - **Learning**: Background validation, periodic checks
 
-- [ ] **7.3** Implement operation-level validation
+- [x] **7.3** Implement operation-level validation
   - Create `ValidateToken()` method
   - Add validation before critical operations
   - **Learning**: Pre-operation checks, safety mechanisms
 
-- [ ] **7.4** Write tests for fencing
+- [x] **7.4** Write tests for fencing
   - Test token validation success
   - Test token validation failure (stale leader)
   - Test token caching
