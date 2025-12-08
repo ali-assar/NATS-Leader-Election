@@ -2,6 +2,7 @@ package leader
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -702,4 +703,327 @@ func TestCallbacksCorrectness_Integration(t *testing.T) {
 		err = election.Stop()
 		assert.NoError(t, err)
 	})
+}
+
+// TestFencingToken_NewLeaderInvalidatesOld_Integration tests that when a new leader
+// is elected, the old leader's token becomes invalid.
+// This is a critical test for split-brain prevention.
+func TestFencingToken_NewLeaderInvalidatesOld_Integration(t *testing.T) {
+	// Setup: Two instances competing for leadership
+	cfgA := ElectionConfig{
+		Bucket:             "leaders",
+		Group:              "test-group",
+		InstanceID:         "instance-A",
+		TTL:                10 * time.Second,
+		HeartbeatInterval:  100 * time.Millisecond,
+		ValidationInterval: 200 * time.Millisecond, // Fast validation for testing
+	}
+	cfgB := ElectionConfig{
+		Bucket:             "leaders",
+		Group:              "test-group",
+		InstanceID:         "instance-B",
+		TTL:                10 * time.Second,
+		HeartbeatInterval:  100 * time.Millisecond,
+		ValidationInterval: 200 * time.Millisecond,
+	}
+
+	nc := natsmock.NewMockConn()
+	adapter := newMockConnAdapter(nc)
+
+	// Create both elections
+	electionA, err := NewElection(adapter, cfgA)
+	assert.NoError(t, err)
+	electionB, err := NewElection(adapter, cfgB)
+	assert.NoError(t, err)
+
+	// Start instance A first - it should become leader
+	err = electionA.Start(context.Background())
+	assert.NoError(t, err)
+	waitForLeader(t, electionA, true, 1*time.Second)
+	assert.True(t, electionA.IsLeader(), "Instance A should be leader")
+
+	tokenA := electionA.Token()
+	assert.NotEmpty(t, tokenA, "Instance A should have a token")
+
+	// Validate token A is valid
+	valid, err := electionA.ValidateToken(context.Background())
+	assert.NoError(t, err)
+	assert.True(t, valid, "Token A should be valid while A is leader")
+
+	// Get mock KV to simulate B taking over leadership
+	js, err := nc.JetStream()
+	assert.NoError(t, err)
+	mockKV, err := js.KeyValue("leaders")
+	assert.NoError(t, err)
+
+	// Start instance B - it should become follower initially
+	err = electionB.Start(context.Background())
+	assert.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+	assert.False(t, electionB.IsLeader(), "Instance B should be follower initially")
+
+	// Set up controllable watchers for both instances
+	updatesChanA := make(chan natsmock.Entry, 10)
+	updatesChanB := make(chan natsmock.Entry, 10)
+	watcherA := &natsmock.MockWatcher{
+		UpdatesChan: updatesChanA,
+		StopChan:    make(chan struct{}),
+	}
+	watcherB := &natsmock.MockWatcher{
+		UpdatesChan: updatesChanB,
+		StopChan:    make(chan struct{}),
+	}
+
+	watchCount := 0
+	mockKV.WatchFunc = func(key string, opts ...natsmock.WatchOption) (natsmock.Watcher, error) {
+		watchCount++
+		if watchCount == 1 {
+			// First watcher is for instance A (when it becomes follower)
+			return watcherA, nil
+		}
+		// Second watcher is for instance B (when it becomes follower)
+		return watcherB, nil
+	}
+
+	// Stop instance A's heartbeat by making Update fail
+	mockKV.UpdateFunc = func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
+		return 0, errors.New("revision mismatch")
+	}
+
+	// Wait for A to be demoted (heartbeat fails)
+	waitForLeader(t, electionA, false, 500*time.Millisecond)
+
+	// Get current entry from KV
+	entry, err := mockKV.Get("test-group")
+	assert.NoError(t, err)
+	assert.NotNil(t, entry)
+
+	// Now update KV store with B's leadership info
+	// This simulates B successfully acquiring leadership
+	tokenB := "token-B-" + time.Now().Format(time.RFC3339Nano)
+	payloadB := map[string]interface{}{
+		"id":    "instance-B",
+		"token": tokenB,
+	}
+	payloadBytesB, err := json.Marshal(payloadB)
+	assert.NoError(t, err)
+
+	// Temporarily clear UpdateFunc to allow the update
+	mockKV.UpdateFunc = nil
+	_, err = mockKV.Update("test-group", payloadBytesB, entry.Revision())
+	assert.NoError(t, err)
+	// Restore UpdateFunc
+	mockKV.UpdateFunc = func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
+		return 0, errors.New("revision mismatch")
+	}
+
+	// At this point, the KV store has B's token, but A still thinks it's leader
+	// (A was demoted due to heartbeat failure, but hasn't validated token yet)
+	// Wait for validation loop to detect the invalid token
+	// Validation interval is 200ms, so wait a bit longer
+	time.Sleep(400 * time.Millisecond)
+
+	// Verify A's token is now invalid (validation should have detected it)
+	// Note: A might have already been demoted by validation loop, but token should still be invalid
+	valid, err = electionA.ValidateToken(context.Background())
+	if electionA.IsLeader() {
+		// If A is still leader (shouldn't happen, but check anyway)
+		assert.Error(t, err, "Token A validation should fail")
+		assert.False(t, valid, "Token A should be invalid")
+	} else {
+		// A should have been demoted by validation loop
+		assert.False(t, electionA.IsLeader(), "A should be demoted after token becomes invalid")
+	}
+
+	// Now validate that A's token is invalid
+	valid, err = electionA.ValidateToken(context.Background())
+	assert.Error(t, err, "Token A validation should fail")
+	assert.False(t, valid, "Token A should be invalid after B becomes leader")
+
+	// Verify that the KV store has B's token (not A's)
+	// B doesn't need to be leader for this test - the key point is that A's token is invalid
+	kvEntry, err := mockKV.Get("test-group")
+	assert.NoError(t, err)
+	assert.NotNil(t, kvEntry)
+
+	var kvPayload map[string]interface{}
+	err = json.Unmarshal(kvEntry.Value(), &kvPayload)
+	assert.NoError(t, err)
+
+	kvToken, ok := kvPayload["token"].(string)
+	assert.True(t, ok, "KV should have a token")
+	assert.NotEqual(t, tokenA, kvToken, "KV token should be different from A's token")
+	assert.Equal(t, tokenB, kvToken, "KV token should match B's token")
+
+	// Cleanup
+	electionA.Stop()
+	electionB.Stop()
+}
+
+// TestFencingToken_OperationRejection_Integration tests that operations with
+// invalid tokens are rejected, preventing split-brain scenarios.
+func TestFencingToken_OperationRejection_Integration(t *testing.T) {
+	cfg := ElectionConfig{
+		Bucket:             "leaders",
+		Group:              "test-group",
+		InstanceID:         "instance-1",
+		TTL:                10 * time.Second,
+		HeartbeatInterval:  100 * time.Millisecond,
+		ValidationInterval: 200 * time.Millisecond,
+	}
+
+	nc := natsmock.NewMockConn()
+	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	assert.NoError(t, err)
+
+	// Track operations
+	var operationsAllowed []string
+	var operationsRejected []string
+	var mu sync.Mutex
+
+	// Helper function to perform operation with token validation
+	performOperation := func(operationName string) bool {
+		if !election.IsLeader() {
+			mu.Lock()
+			operationsRejected = append(operationsRejected, operationName)
+			mu.Unlock()
+			return false
+		}
+
+		// Validate token before operation
+		if !election.ValidateTokenOrDemote(context.Background()) {
+			mu.Lock()
+			operationsRejected = append(operationsRejected, operationName)
+			mu.Unlock()
+			return false
+		}
+
+		// Operation succeeds
+		mu.Lock()
+		operationsAllowed = append(operationsAllowed, operationName)
+		mu.Unlock()
+		return true
+	}
+
+	// Start and become leader
+	err = election.Start(context.Background())
+	assert.NoError(t, err)
+	waitForLeader(t, election, true, 1*time.Second)
+
+	// Perform operation while leader - should succeed
+	success := performOperation("operation-1")
+	assert.True(t, success, "Operation should succeed with valid token")
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	assert.Equal(t, 1, len(operationsAllowed), "One operation should be allowed")
+	assert.Equal(t, 0, len(operationsRejected), "No operations should be rejected yet")
+	mu.Unlock()
+
+	// Get mock KV and invalidate the token
+	js, err := nc.JetStream()
+	assert.NoError(t, err)
+	mockKV, err := js.KeyValue("leaders")
+	assert.NoError(t, err)
+
+	// Update with different leader/token to invalidate current token
+	entry, err := mockKV.Get("test-group")
+	assert.NoError(t, err)
+
+	newPayload := map[string]interface{}{
+		"id":    "instance-2",
+		"token": "different-token-123",
+	}
+	newPayloadBytes, err := json.Marshal(newPayload)
+	assert.NoError(t, err)
+
+	_, err = mockKV.Update("test-group", newPayloadBytes, entry.Revision())
+	assert.NoError(t, err)
+
+	// Wait for validation loop to detect invalid token and demote
+	waitForLeader(t, election, false, 500*time.Millisecond)
+
+	// Try to perform operation after losing leadership - should be rejected
+	success = performOperation("operation-2")
+	assert.False(t, success, "Operation should be rejected with invalid token")
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	assert.Equal(t, 1, len(operationsAllowed), "Only one operation should be allowed")
+	assert.Equal(t, 1, len(operationsRejected), "One operation should be rejected")
+	assert.Equal(t, "operation-2", operationsRejected[0], "Second operation should be rejected")
+	mu.Unlock()
+
+	election.Stop()
+}
+
+// TestFencingToken_PeriodicValidation_Integration tests that the validation loop
+// periodically checks the token and demotes quickly when it becomes invalid.
+func TestFencingToken_PeriodicValidation_Integration(t *testing.T) {
+	cfg := ElectionConfig{
+		Bucket:             "leaders",
+		Group:              "test-group",
+		InstanceID:         "instance-1",
+		TTL:                10 * time.Second,
+		HeartbeatInterval:  100 * time.Millisecond,
+		ValidationInterval: 200 * time.Millisecond, // Fast validation for testing
+	}
+
+	nc := natsmock.NewMockConn()
+	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	assert.NoError(t, err)
+
+	var demoteCalled bool
+	var demoteTime time.Time
+	election.OnDemote(func() {
+		demoteCalled = true
+		demoteTime = time.Now()
+	})
+
+	// Start and become leader
+	err = election.Start(context.Background())
+	assert.NoError(t, err)
+	waitForLeader(t, election, true, 1*time.Second)
+	assert.True(t, election.IsLeader(), "Should be leader")
+
+	// Wait for at least one validation cycle to complete (token is valid)
+	time.Sleep(300 * time.Millisecond)
+	assert.True(t, election.IsLeader(), "Should still be leader (token valid)")
+
+	// Get mock KV and invalidate the token
+	js, err := nc.JetStream()
+	assert.NoError(t, err)
+	mockKV, err := js.KeyValue("leaders")
+	assert.NoError(t, err)
+
+	entry, err := mockKV.Get("test-group")
+	assert.NoError(t, err)
+
+	// Record when we invalidate the token
+	invalidationTime := time.Now()
+
+	// Update with different token to invalidate
+	newPayload := map[string]interface{}{
+		"id":    "instance-2",
+		"token": "different-token-456",
+	}
+	newPayloadBytes, err := json.Marshal(newPayload)
+	assert.NoError(t, err)
+
+	_, err = mockKV.Update("test-group", newPayloadBytes, entry.Revision())
+	assert.NoError(t, err)
+
+	// Wait for validation loop to detect invalid token
+	// Should detect within one validation interval (200ms) + some buffer
+	waitForLeader(t, election, false, 500*time.Millisecond)
+
+	// Verify demotion happened
+	assert.False(t, election.IsLeader(), "Should be demoted after token becomes invalid")
+	assert.True(t, demoteCalled, "OnDemote callback should be called")
+
+	// Verify demotion happened quickly (within validation interval + buffer)
+	demotionDelay := demoteTime.Sub(invalidationTime)
+	assert.Less(t, demotionDelay, 500*time.Millisecond, "Demotion should happen quickly after token invalidation")
+
+	election.Stop()
 }

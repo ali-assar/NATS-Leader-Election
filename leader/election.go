@@ -18,15 +18,19 @@ type Election interface {
 	Token() string
 	OnPromote(func(ctx context.Context, token string))
 	OnDemote(func())
+
+	ValidateToken(ctx context.Context) (bool, error)
+	ValidateTokenOrDemote(ctx context.Context) bool
 }
 
 type ElectionConfig struct {
-	Bucket            string
-	Group             string
-	InstanceID        string
-	TTL               time.Duration
-	HeartbeatInterval time.Duration
-	Logger            logger.Logger
+	Bucket             string
+	Group              string
+	InstanceID         string
+	TTL                time.Duration
+	HeartbeatInterval  time.Duration
+	Logger             logger.Logger
+	ValidationInterval time.Duration
 }
 
 type JetStreamProvider interface {

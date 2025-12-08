@@ -185,7 +185,7 @@ This is your step-by-step learning guide. Work through each task in order, under
   - Handle graceful shutdown
   - **Learning**: Resource cleanup, context cancellation, graceful shutdown
 
-- [ ] **6.4** Write integration tests
+- [x] **6.4** Write integration tests
   - Test full election cycle (start → leader → demote → follower)
   - Test multiple instances competing
   - Test callbacks are called correctly

@@ -19,6 +19,9 @@ var (
 	ErrPermissionDenied = errors.New("permission denied")
 
 	ErrConnectionLost = errors.New("connection lost")
+
+	ErrTokenInvalid  = errors.New("fencing token is invalid")
+	ErrTokenMismatch = errors.New("fencing token mismatch")
 )
 
 type ElectionError struct {
@@ -57,4 +60,27 @@ func (e *ElectionError) Error() string {
 	}
 
 	return msg
+}
+
+type TokenValidationError struct {
+	LocalToken string
+	KvToken    string
+	LeaderID   string
+	Reason     string
+	Err        error
+}
+
+func (e *TokenValidationError) Error() string {
+	msg := fmt.Sprintf("token validation failed: %s", e.Reason)
+	if e.LocalToken != "" && e.KvToken != "" {
+		msg += fmt.Sprintf(" (local: %s, kv: %s)", e.LocalToken, e.KvToken)
+	}
+	if e.Err != nil {
+		msg += fmt.Sprintf(": %v", e.Err)
+	}
+	return msg
+}
+
+func (e *TokenValidationError) Unwrap() error {
+	return e.Err
 }

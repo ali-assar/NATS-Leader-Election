@@ -195,12 +195,21 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 	e.lastHeartbeat.Store(time.Now())
 	e.lastTransition.Store(time.Now())
 
+	// Start heartbeat loop (always)
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
 		e.heartbeatLoop(e.ctx)
 	}()
 
+	// Start validation loop (always)
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		e.validationLoop(e.ctx)
+	}()
+
+	// Call onPromote callback (if set)
 	if e.onPromote != nil {
 		e.wg.Add(1)
 		go func() {
@@ -355,4 +364,169 @@ func (e *kvElection) OnDemote(fn func()) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.onDemote = fn
+}
+
+// validateToken checks if the current local token matches the token in KV store.
+// If error occurs, returns false (fail-safe: assume invalid).
+func (e *kvElection) validateToken(ctx context.Context) (bool, error) {
+	localToken := e.Token()
+	if localToken == "" {
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "no token",
+			Err:        nil,
+		}
+	}
+
+	// Check context before making the call
+	select {
+	case <-ctx.Done():
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "validation timeout",
+			Err:        ctx.Err(),
+		}
+	default:
+	}
+
+	// Wrap Get() in a goroutine to respect context timeout
+	type getResult struct {
+		entry Entry
+		err   error
+	}
+	resultChan := make(chan getResult, 1)
+
+	go func() {
+		entry, err := e.kv.Get(e.key)
+		resultChan <- getResult{entry: entry, err: err}
+	}()
+
+	var entry Entry
+	var err error
+	select {
+	case <-ctx.Done():
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "validation timeout",
+			Err:        ctx.Err(),
+		}
+	case result := <-resultChan:
+		entry = result.entry
+		err = result.err
+	}
+
+	if err != nil {
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "failed to get token from KV",
+			Err:        err,
+		}
+	}
+
+	if entry == nil {
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "no token in KV",
+			Err:        nil,
+		}
+	}
+
+	payload := make(map[string]interface{})
+	if err := json.Unmarshal(entry.Value(), &payload); err != nil {
+		return false, err
+	}
+
+	kvTokenInterface, ok := payload["token"]
+	if !ok {
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "no token in KV",
+			Err:        nil,
+		}
+	}
+
+	kvToken, ok := kvTokenInterface.(string)
+	if !ok {
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			KvToken:    "",
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "invalid token type",
+			Err:        nil,
+		}
+	}
+
+	if localToken != kvToken {
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			KvToken:    kvToken,
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "token mismatch",
+			Err:        nil,
+		}
+	}
+
+	leaderIDInterface, ok := payload["id"]
+	if !ok {
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			KvToken:    kvToken,
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "missing leader ID in payload",
+			Err:        nil,
+		}
+	}
+
+	leaderID, ok := leaderIDInterface.(string)
+	if !ok {
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			KvToken:    kvToken,
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "invalid leader ID type",
+			Err:        nil,
+		}
+	}
+
+	if leaderID != e.cfg.InstanceID {
+		return false, &TokenValidationError{
+			LocalToken: localToken,
+			KvToken:    kvToken,
+			LeaderID:   e.cfg.InstanceID,
+			Reason:     "leader ID mismatch",
+			Err:        nil,
+		}
+	}
+
+	return true, nil
+}
+
+// ValidateToken validates the current fencing token against the KV store.
+// This method can be called before critical operations to ensure the leader is still valid.
+func (e *kvElection) ValidateToken(ctx context.Context) (bool, error) {
+	if !e.IsLeader() {
+		return false, ErrNotLeader
+	}
+
+	return e.validateToken(ctx)
+}
+
+// ValidateTokenOrDemote validates the token and demotes if invalid.
+// Returns true if valid, false if invalid (and demoted).
+// Use this for operations that must not proceed with an invalid token.
+func (e *kvElection) ValidateTokenOrDemote(ctx context.Context) bool {
+	isValid, err := e.ValidateToken(ctx)
+	if err != nil || !isValid {
+		if e.IsLeader() {
+			e.handleValidationFailure(err)
+		}
+		return false
+	}
+	return true
 }
