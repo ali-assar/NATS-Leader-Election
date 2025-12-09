@@ -269,8 +269,8 @@ func TestValidationLoop_ValidToken(t *testing.T) {
 		Group:              "test-group",
 		InstanceID:         "instance-1",
 		TTL:                10 * time.Second,
-		HeartbeatInterval:  1 * time.Second,
-		ValidationInterval: 200 * time.Millisecond, // Fast validation for testing
+		HeartbeatInterval:  200 * time.Millisecond, // Reduced for faster testing
+		ValidationInterval: 200 * time.Millisecond, // Fast validation for testing (>= HeartbeatInterval)
 	}
 
 	nc := natsmock.NewMockConn()
@@ -306,8 +306,8 @@ func TestValidationLoop_InvalidToken(t *testing.T) {
 		Group:              "test-group",
 		InstanceID:         "instance-1",
 		TTL:                10 * time.Second,
-		HeartbeatInterval:  1 * time.Second,
-		ValidationInterval: 200 * time.Millisecond, // Fast validation for testing
+		HeartbeatInterval:  200 * time.Millisecond, // Reduced for faster testing
+		ValidationInterval: 200 * time.Millisecond, // Fast validation for testing (>= HeartbeatInterval)
 	}
 
 	nc := natsmock.NewMockConn()
@@ -370,8 +370,8 @@ func TestValidationLoop_Timeout(t *testing.T) {
 		Group:              "test-group",
 		InstanceID:         "instance-1",
 		TTL:                10 * time.Second,
-		HeartbeatInterval:  1 * time.Second,
-		ValidationInterval: 200 * time.Millisecond, // Fast validation for testing
+		HeartbeatInterval:  200 * time.Millisecond, // Reduced for faster testing
+		ValidationInterval: 200 * time.Millisecond, // Fast validation for testing (>= HeartbeatInterval)
 	}
 
 	nc := natsmock.NewMockConn()

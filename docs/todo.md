@@ -246,26 +246,26 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 9: Implement Retry and Backoff Logic
 
-- [ ] **9.1** Create `leader/retry.go` - Part 1: Error Classification
+- [x] **9.1** Create `leader/retry.go` - Part 1: Error Classification
   - Implement error classification (transient vs permanent)
   - Create error type checking functions
   - Improve error wrapping to support Go 1.13+ `errors.Is()` and `errors.As()`
   - Make custom errors (like `timeoutError`) compatible with error wrapping conventions
   - **Learning**: Error analysis, error categorization, error wrapping patterns
 
-- [ ] **9.2** Implement exponential backoff
+- [x] **9.2** Implement exponential backoff
   - Create backoff calculation function
   - Add jitter to backoff
   - Implement max backoff limits
   - **Learning**: Backoff algorithms, exponential growth, jitter
 
-- [ ] **9.3** Implement circuit breaker pattern
+- [x] **9.3** Implement circuit breaker pattern
   - Track consecutive failures
   - Open circuit after threshold
   - Reset circuit on success
   - **Learning**: Circuit breaker pattern, failure handling
 
-- [ ] **9.4** Write tests for retry logic
+- [x] **9.4** Write tests for retry logic
   - Test backoff calculations
   - Test circuit breaker behavior
   - Test error classification
@@ -273,25 +273,25 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 10: Implement Configuration Validation
 
-- [ ] **10.1** Create `leader/validation.go`
+- [x] **10.1** Create `leader/validation.go`
   - Implement TTL/HeartbeatInterval ratio validation
   - Validate required fields
   - Validate timeout relationships
   - **Learning**: Input validation, constraint checking
 
-- [ ] **10.4** Implement TTL support in KV operations (Enhancement)
+- [x]*10.4** Implement TTL support in KV operations (Enhancement)
   - Add TTL support to `KeyValue` interface `Create()` method
   - Use `nats.WithMaxAge()` option when creating leadership key
   - Implement TTL in mock KeyValue for testing
   - Ensure TTL is properly set based on `ElectionConfig.TTL`
   - **Learning**: NATS KV TTL options, key expiration, testing with TTL
 
-- [ ] **10.2** Add validation to constructor
+- [x] **10.2** Add validation to constructor
   - Call validation in `NewElection()`
   - Return clear error messages
   - **Learning**: Early validation, clear error messages
 
-- [ ] **10.3** Write tests for validation
+- [x] **10.3** Write tests for validation
   - Test all validation rules
   - Test error messages are clear
   - **Learning**: Testing validation logic

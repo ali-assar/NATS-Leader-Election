@@ -225,3 +225,36 @@ func IsTransientError(err error) bool {
 	// Default: if not permanent, assume transient (conservative approach)
 	return true
 }
+
+type ValidationError struct {
+	Field  string
+	Value  interface{}
+	Reason string
+	Err    error
+}
+
+func (e *ValidationError) Error() string {
+	msg := fmt.Sprintf("invalid configuration: field %s", e.Field)
+	if e.Value != nil {
+		msg += fmt.Sprintf(" = %v", e.Value)
+	}
+	if e.Reason != "" {
+		msg += fmt.Sprintf(": %s", e.Reason)
+	}
+	if e.Err != nil {
+		msg += fmt.Sprintf(": %v", e.Err)
+	}
+	return msg
+}
+
+func (e *ValidationError) Unwrap() error {
+	return e.Err
+}
+
+func NewValidationError(field string, value interface{}, reason string) *ValidationError {
+	return &ValidationError{
+		Field:  field,
+		Value:  value,
+		Reason: reason,
+	}
+}

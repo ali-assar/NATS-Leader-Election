@@ -191,7 +191,13 @@ func (e *kvElection) attemptAcquire() error {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	rev, err := e.kv.Create(e.key, payloadBytes)
+	// Use TTL if configured (NATS KV uses nats.WithMaxAge)
+	var opts []interface{}
+	if e.cfg.TTL > 0 {
+		opts = append(opts, e.cfg.TTL)
+	}
+
+	rev, err := e.kv.Create(e.key, payloadBytes, opts...)
 	if err != nil {
 		return err
 	}

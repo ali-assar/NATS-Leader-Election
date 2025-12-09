@@ -73,10 +73,18 @@ type natsKeyValueAdapter struct {
 }
 
 func (a *natsKeyValueAdapter) Create(key string, value []byte, opts ...interface{}) (uint64, error) {
+	// Note: NATS KV doesn't support per-key TTL options.
+	// TTL is set at the bucket level when creating the bucket.
+	// We accept TTL in opts for interface compatibility, but ignore it here.
+	// The mock implementation can track TTL if needed for testing.
 	return a.kv.Create(key, value)
 }
 
 func (a *natsKeyValueAdapter) Update(key string, value []byte, rev uint64, opts ...interface{}) (uint64, error) {
+	// Note: NATS KV doesn't support per-key TTL options.
+	// TTL is set at the bucket level when creating the bucket.
+	// We accept TTL in opts for interface compatibility, but ignore it here.
+	// The mock implementation can track TTL if needed for testing.
 	return a.kv.Update(key, value, rev)
 }
 
@@ -172,28 +180,6 @@ func NewElection(nc JetStreamProvider, cfg ElectionConfig) (Election, error) {
 
 func NewElectionWithConn(nc *nats.Conn, cfg ElectionConfig) (Election, error) {
 	return NewElection(&natsConnAdapter{nc: nc}, cfg)
-}
-
-func validateConfig(cfg ElectionConfig) error {
-	if cfg.Bucket == "" {
-		return ErrInvalidConfig
-	}
-	if cfg.Group == "" {
-		return ErrInvalidConfig
-	}
-	if cfg.InstanceID == "" {
-		return ErrInvalidConfig
-	}
-	if cfg.TTL <= 0 {
-		return ErrInvalidConfig
-	}
-	if cfg.HeartbeatInterval <= 0 {
-		return ErrInvalidConfig
-	}
-	if cfg.TTL < cfg.HeartbeatInterval*3 {
-		return ErrInvalidConfig
-	}
-	return nil
 }
 
 type ElectionStatus struct {

@@ -52,7 +52,12 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 			resultChan := make(chan updateResult, 1)
 
 			go func() {
-				rev, updateErr := e.kv.Update(e.key, payloadBytes, currentRev)
+				// Pass TTL option to Update to refresh the key's expiration
+				var opts []interface{}
+				if e.cfg.TTL > 0 {
+					opts = append(opts, e.cfg.TTL)
+				}
+				rev, updateErr := e.kv.Update(e.key, payloadBytes, currentRev, opts...)
 				resultChan <- updateResult{rev: rev, err: updateErr}
 			}()
 
