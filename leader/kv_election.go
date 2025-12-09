@@ -169,16 +169,7 @@ func (e *kvElection) attemptAcquireWithRetry(ctx context.Context) {
 			return
 		}
 
-		backoff := baseBackoff * time.Duration(1<<uint(retry))
-		if backoff > maxBackoff {
-			backoff = maxBackoff
-		}
-
-		jitterAmount := time.Duration(float64(backoff) * jitter * (rand.Float64()*2 - 1))
-		finalBackoff := backoff + jitterAmount
-		if finalBackoff < 0 {
-			finalBackoff = backoff
-		}
+		finalBackoff := CalculateBackoff(DefaultBackoffConfig(), retry)
 
 		select {
 		case <-ctx.Done():

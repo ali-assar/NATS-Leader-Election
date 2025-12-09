@@ -221,24 +221,24 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 8: Implement Connection Health Monitoring
 
-- [ ] **8.1** Create `leader/connection.go` - Part 1: Status Tracking
+- [x] **8.1** Create `leader/connection.go` - Part 1: Status Tracking
   - Subscribe to NATS connection status events
   - Track connection state
   - **Learning**: Event subscriptions, state tracking
 
-- [ ] **8.2** Implement disconnect handling
+- [x] **8.2** Implement disconnect handling
   - Detect disconnections
   - Start grace period timer
   - Demote if grace period exceeded
   - **Learning**: Network failure handling, grace periods
 
-- [ ] **8.3** Implement reconnection handling
+- [x] **8.3** Implement reconnection handling
   - Detect reconnections
   - Verify leadership status
   - Resume or demote based on verification
   - **Learning**: Reconnection logic, state verification
 
-- [ ] **8.4** Write tests for connection handling
+- [x] **8.4** Write tests for connection handling
   - Test disconnect scenarios
   - Test reconnection scenarios
   - Test grace period behavior

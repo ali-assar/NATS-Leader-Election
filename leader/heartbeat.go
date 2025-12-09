@@ -3,7 +3,6 @@ package leader
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"time"
 )
 
@@ -63,14 +62,14 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-time.After(updateTimeout):
-				updateErr = &timeoutError{message: "heartbeat update timeout"}
+				updateErr = NewTimeoutError("heartbeat update", updateTimeout, nil)
 			case result := <-resultChan:
 				newRev = result.rev
 				updateErr = result.err
 			}
 
 			if updateErr != nil {
-				if isPermanentError(updateErr) {
+				if IsPermanentError(updateErr) {
 					e.handleHeartbeatFailure(updateErr)
 					return
 				}
@@ -88,51 +87,6 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 			e.lastHeartbeat.Store(time.Now())
 		}
 	}
-}
-
-type timeoutError struct {
-	message string
-}
-
-func (e *timeoutError) Error() string {
-	return e.message
-}
-
-// isPermanentError classifies errors as permanent (demote immediately) vs transient (retry).
-func isPermanentError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	errMsg := strings.ToLower(err.Error())
-
-	permanentPatterns := []string{
-		"revision mismatch",
-		"key not found",
-		"permission denied",
-		"bucket not found",
-	}
-
-	for _, pattern := range permanentPatterns {
-		if strings.Contains(errMsg, pattern) {
-			return true
-		}
-	}
-
-	transientPatterns := []string{
-		"timeout",
-		"deadline exceeded",
-		"connection lost",
-		"temporary",
-	}
-
-	for _, pattern := range transientPatterns {
-		if strings.Contains(errMsg, pattern) {
-			return false
-		}
-	}
-
-	return false
 }
 
 func (e *kvElection) handleHeartbeatFailure(err error) {
