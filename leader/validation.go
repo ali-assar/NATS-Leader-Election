@@ -52,5 +52,9 @@ func validateConfig(cfg ElectionConfig) error {
 		}
 	}
 
+	if cfg.MaxConsecutiveFailures < 0 {
+		return NewValidationError("MaxConsecutiveFailures", cfg.MaxConsecutiveFailures, "must be >= 0")
+	}
+
 	return nil
 }

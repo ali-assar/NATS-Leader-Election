@@ -60,6 +60,8 @@ type kvElection struct {
 	// Connection monitoring
 	connectionMonitor ConnectionMonitor
 	disconnectHandler *disconnectHandler
+
+	healthFailureCount atomic.Int32
 }
 
 func newKVElection(nc JetStreamProvider, cfg ElectionConfig) (*kvElection, error) {

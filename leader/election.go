@@ -32,6 +32,13 @@ type ElectionConfig struct {
 	Logger                logger.Logger
 	ValidationInterval    time.Duration
 	DisconnectGracePeriod time.Duration //if zero, uses default (3x HeartbeatInterval, minimum 5 seconds).
+
+	// Health checking (OPTIONAL)
+	// If HealthChecker is nil, health checking is disabled.
+	// If provided, health is checked before each heartbeat.
+	// If health check fails MaxConsecutiveFailures times consecutively, leader demotes.
+	HealthChecker          HealthChecker // Optional: nil = disabled, non-nil = enabled
+	MaxConsecutiveFailures int           // Max consecutive failures before demotion (default: 3, only used if HealthChecker is set)
 }
 
 type JetStreamProvider interface {

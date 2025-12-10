@@ -14,6 +14,11 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 	consecutiveFailures := 0
 	maxFailures := 3
 
+	maxHealthFailures := e.cfg.MaxConsecutiveFailures
+	if maxHealthFailures <= 0 {
+		maxHealthFailures = 3
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -21,6 +26,21 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 		case <-ticker.C:
 			if !e.IsLeader() {
 				return
+			}
+
+			if e.cfg.HealthChecker != nil {
+				healthCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+				healthy := e.cfg.HealthChecker.Check(healthCtx)
+				cancel()
+				if !healthy {
+					e.healthFailureCount.Add(1)
+					if e.healthFailureCount.Load() >= int32(maxHealthFailures) {
+						e.handleHealthCheckFailure()
+						return
+					}
+					continue
+				}
+				e.healthFailureCount.Store(0)
 			}
 
 			currentRev := e.revision.Load()
@@ -95,6 +115,18 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 }
 
 func (e *kvElection) handleHeartbeatFailure(err error) {
+	e.becomeFollower()
+
+	e.mu.RLock()
+	onDemote := e.onDemote
+	e.mu.RUnlock()
+
+	if onDemote != nil {
+		onDemote()
+	}
+}
+
+func (e *kvElection) handleHealthCheckFailure() {
 	e.becomeFollower()
 
 	e.mu.RLock()
