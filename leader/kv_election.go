@@ -244,7 +244,10 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 					// Panic occurred in user callback - log it when logger is integrated
 				}
 			}()
-			e.onPromote(e.ctx, token)
+			// Create context that is cancelled when election stops
+			promoteCtx, cancel := context.WithCancel(e.ctx)
+			defer cancel()
+			e.onPromote(promoteCtx, token)
 		}()
 	}
 }
@@ -317,8 +320,113 @@ func (e *kvElection) Stop() error {
 	return nil
 }
 
-func (e *kvElection) StopWithContext(ctx context.Context) error {
-	return e.Stop()
+func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) error {
+	e.mu.Lock()
+
+	if e.ctx == nil {
+		e.mu.Unlock()
+		return ErrAlreadyStopped
+	}
+
+	wasLeader := e.isLeader.Load()
+
+	// Cancel election context
+	if e.cancel != nil {
+		e.cancel()
+	}
+
+	e.isLeader.Store(false)
+	e.state.Store(StateStopped)
+	e.lastTransition.Store(time.Now())
+	e.watcherRunning.Store(false)
+
+	// Stop disconnect handler timer
+	if e.disconnectHandler != nil {
+		e.disconnectHandler.stop()
+	}
+
+	e.mu.Unlock()
+
+	// Stop connection monitoring
+	if e.connectionMonitor != nil {
+		_ = e.connectionMonitor.Stop()
+	}
+
+	// Determine timeout
+	timeout := opts.Timeout
+	if timeout == 0 {
+		deadline, ok := ctx.Deadline()
+		if ok {
+			timeout = time.Until(deadline)
+		} else {
+			timeout = 5 * time.Second // Default
+		}
+	}
+
+	// Wait for goroutines to finish
+	done := make(chan struct{})
+	go func() {
+		e.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// All goroutines finished
+	case <-time.After(timeout):
+		// Timeout exceeded
+		return fmt.Errorf("shutdown timeout exceeded: %v", timeout)
+	case <-ctx.Done():
+		// Context cancelled
+		return ctx.Err()
+	}
+
+	// Clear context to mark as stopped (after goroutines finish)
+	e.mu.Lock()
+	e.ctx = nil
+	e.mu.Unlock()
+
+	// Delete key if requested and was leader
+	if opts.DeleteKey && wasLeader {
+		if err := e.kv.Delete(e.key); err != nil {
+			// Log error but don't fail shutdown
+			// Key will expire via TTL anyway
+		}
+	}
+
+	// Call OnDemote callback if was leader
+	if wasLeader && e.onDemote != nil {
+		e.mu.RLock()
+		onDemote := e.onDemote
+		e.mu.RUnlock()
+
+		if onDemote != nil {
+			if opts.WaitForDemote {
+				// Wait for callback to complete
+				done := make(chan struct{})
+				go func() {
+					onDemote()
+					close(done)
+				}()
+
+				select {
+				case <-done:
+					// Callback completed
+				case <-time.After(timeout):
+					// Timeout exceeded
+					return fmt.Errorf("OnDemote callback timeout exceeded: %v", timeout)
+				case <-ctx.Done():
+					// Context cancelled
+					return ctx.Err()
+				}
+			} else {
+				// Call but don't wait
+				go onDemote()
+			}
+		}
+	}
+
+	return nil
 }
 
 func (e *kvElection) Status() ElectionStatus {

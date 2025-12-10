@@ -11,7 +11,7 @@ import (
 type Election interface {
 	Start(ctx context.Context) error
 	Stop() error
-	StopWithContext(ctx context.Context) error
+	StopWithContext(ctx context.Context, opts StopOptions) error
 	Status() ElectionStatus
 	IsLeader() bool
 	LeaderID() string
@@ -39,6 +39,23 @@ type ElectionConfig struct {
 	// If health check fails MaxConsecutiveFailures times consecutively, leader demotes.
 	HealthChecker          HealthChecker // Optional: nil = disabled, non-nil = enabled
 	MaxConsecutiveFailures int           // Max consecutive failures before demotion (default: 3, only used if HealthChecker is set)
+}
+
+// StopOptions configures the behavior of StopWithContext.
+type StopOptions struct {
+	// DeleteKey deletes the leadership key on stop for fast failover.
+	// If true, the key is deleted immediately, allowing a new leader
+	// to be elected without waiting for TTL expiration.
+	DeleteKey bool
+
+	// WaitForDemote waits for the OnDemote callback to complete before
+	// returning. If false, the callback is called but not waited for.
+	WaitForDemote bool
+
+	// Timeout is the maximum time to wait for shutdown operations.
+	// If 0, the context timeout is used. If context has no timeout,
+	// a default of 5 seconds is used.
+	Timeout time.Duration
 }
 
 type JetStreamProvider interface {
