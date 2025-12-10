@@ -298,17 +298,17 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 11: Implement Health Checker Integration
 
-- [ ] **11.1** Update `leader/health.go` (if exists) or create it
+- [x] **11.1** Update `leader/health.go` (if exists) or create it
   - Define `HealthChecker` interface
   - Integrate health checks into heartbeat loop
   - **Learning**: Health checking patterns, integration points
 
-- [ ] **11.2** Implement health-based demotion
+- [x] **11.2** Implement health-based demotion
   - Check health before each heartbeat
   - Demote if health check fails N times
   - **Learning**: Health-aware systems, failure detection
 
-- [ ] **11.3** Write tests for health checking
+- [x] **11.3** Write tests for health checking
   - Test healthy leader continues
   - Test unhealthy leader demotes
   - Test intermittent health issues
@@ -316,24 +316,24 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 12: Implement Graceful Shutdown
 
-- [ ] **12.1** Implement `StopWithContext()` method
+- [x] **12.1** Implement `StopWithContext()` method
   - Accept context with timeout
   - Accept `StopOptions` for configuration
   - Ensure context is properly propagated to callbacks
   - Verify callback contexts are cancelled when election stops
   - **Learning**: Context patterns, timeout handling, options pattern, context propagation
 
-- [ ] **12.2** Implement key deletion on stop
+- [x] **12.2** Implement key deletion on stop
   - Optionally delete leadership key
   - Handle deletion errors
   - **Learning**: Cleanup patterns, optional behavior
 
-- [ ] **12.3** Implement callback waiting
+- [x] **12.3** Implement callback waiting
   - Wait for `OnDemote` to complete
   - Handle timeout scenarios
   - **Learning**: Synchronization, waiting for completion
 
-- [ ] **12.4** Write tests for graceful shutdown
+- [x] **12.4** Write tests for graceful shutdown
   - Test key deletion
   - Test callback waiting
   - Test timeout scenarios
@@ -384,7 +384,7 @@ This is your step-by-step learning guide. Work through each task in order, under
   - **Learning**: Test infrastructure, test helpers
 
 - [ ] **14.2** Write integration tests
-  - Test full election with real NATS
+  - Test full election with real NATSz
   - Test leader takeover scenarios
   - Test multiple candidates
   - **Learning**: Integration testing, real system testing

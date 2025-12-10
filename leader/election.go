@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/ali-assar/NATS-Leader-Election/utils/logger"
 	"github.com/nats-io/nats.go"
 )
 
@@ -29,7 +28,7 @@ type ElectionConfig struct {
 	InstanceID            string
 	TTL                   time.Duration
 	HeartbeatInterval     time.Duration
-	Logger                logger.Logger
+	Logger                Logger
 	ValidationInterval    time.Duration
 	DisconnectGracePeriod time.Duration //if zero, uses default (3x HeartbeatInterval, minimum 5 seconds).
 

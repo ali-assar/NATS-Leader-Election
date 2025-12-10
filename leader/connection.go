@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"go.uber.org/zap"
 )
 
 type ConnectionStatus int
@@ -112,6 +113,9 @@ func (m *natsConnectionMonitor) handleDisconnect(nc *nats.Conn) {
 	handler := m.disconnectHandler
 	m.mu.RUnlock()
 
+	// Note: Logging would require access to election instance
+	// This is handled in disconnectHandler.handleDisconnect()
+
 	if handler != nil {
 		handler()
 	}
@@ -123,6 +127,9 @@ func (m *natsConnectionMonitor) handleReconnect(nc *nats.Conn) {
 	m.mu.RLock()
 	handler := m.reconnectHandler
 	m.mu.RUnlock()
+
+	// Note: Logging would require access to election instance
+	// This is handled in handleReconnect()
 
 	if handler != nil {
 		handler()
@@ -160,6 +167,14 @@ func (d *disconnectHandler) handleDisconnect() {
 		}
 	}
 
+	// Log disconnection
+	log := d.election.getLogger()
+	log.Warn("connection_disconnected",
+		append(d.election.logWithContext(d.election.ctx),
+			zap.Duration("grace_period", gracePeriod),
+		)...,
+	)
+
 	// Stop existing timer if any
 	if d.timer != nil {
 		d.timer.Stop()
@@ -182,12 +197,24 @@ func (d *disconnectHandler) handleGracePeriodExpired() {
 	if d.election.connectionMonitor != nil {
 		if d.election.connectionMonitor.Status() != ConnectionStatusDisconnected {
 			// Reconnected, don't demote
+			log := d.election.getLogger()
+			log.Info("connection_reconnected_before_grace_period",
+				append(d.election.logWithContext(d.election.ctx))...,
+			)
 			return
 		}
 	}
 
 	// Still disconnected, demote if still leader
 	if d.election.isLeader.Load() {
+		log := d.election.getLogger()
+		disconnectedDuration := time.Since(d.disconnectedAt)
+		log.Error("demoting_due_to_connection_loss",
+			append(d.election.logWithContext(d.election.ctx),
+				zap.Duration("disconnected_duration", disconnectedDuration),
+			)...,
+		)
+
 		d.election.becomeFollower()
 
 		d.election.mu.RLock()
@@ -195,6 +222,11 @@ func (d *disconnectHandler) handleGracePeriodExpired() {
 		d.election.mu.RUnlock()
 
 		if onDemote != nil {
+			log.Info("leader_demoted",
+				append(d.election.logWithContext(d.election.ctx),
+					zap.String("reason", "connection_loss"),
+				)...,
+			)
 			onDemote()
 		}
 	}
@@ -215,6 +247,11 @@ func (e *kvElection) handleReconnect() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	log := e.getLogger()
+	log.Info("connection_reconnected",
+		append(e.logWithContext(e.ctx))...,
+	)
+
 	if e.disconnectHandler.timer != nil {
 		e.disconnectHandler.timer.Stop()
 		e.disconnectHandler.timer = nil
@@ -223,6 +260,10 @@ func (e *kvElection) handleReconnect() {
 	if !e.isLeader.Load() {
 		return
 	}
+
+	log.Info("verifying_leadership_after_reconnect",
+		append(e.logWithContext(e.ctx))...,
+	)
 
 	e.wg.Add(1)
 	go func() {
@@ -239,9 +280,17 @@ func (e *kvElection) verifyLeadershipAfterReconnect() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
+	log := e.getLogger()
+
 	// Test connection with a simple operation
 	_, err := e.kv.Get(e.key)
 	if err != nil {
+		log.Error("reconnect_verification_failed",
+			append(e.logWithContext(ctx),
+				zap.Error(err),
+				zap.String("error_type", "connection_test_failed"),
+			)...,
+		)
 		// Connection not working, demote
 		e.handleReconnectVerificationFailed(err)
 		return
@@ -250,6 +299,13 @@ func (e *kvElection) verifyLeadershipAfterReconnect() {
 	// Verify token is still valid
 	isValid, err := e.validateToken(ctx)
 	if err != nil || !isValid {
+		log.Error("reconnect_verification_failed",
+			append(e.logWithContext(ctx),
+				zap.Error(err),
+				zap.String("error_type", "token_validation_failed"),
+				zap.Bool("is_valid", isValid),
+			)...,
+		)
 		// Token invalid, demote
 		e.handleReconnectVerificationFailed(err)
 		return
@@ -264,6 +320,10 @@ func (e *kvElection) verifyLeadershipAfterReconnect() {
 		return
 	}
 
+	log.Info("reconnect_verification_success",
+		append(e.logWithContext(ctx))...,
+	)
+
 	// Resume heartbeat loop if it was stopped
 	// Note: Heartbeat loop should resume automatically, but we verify
 	// Update status to Connected after successful verification
@@ -277,6 +337,14 @@ func (e *kvElection) handleReconnectVerificationFailed(err error) {
 	defer e.mu.Unlock()
 
 	if e.isLeader.Load() {
+		log := e.getLogger()
+		log.Error("demoting_due_to_reconnect_verification_failure",
+			append(e.logWithContext(e.ctx),
+				zap.Error(err),
+				zap.String("error_type", classifyErrorType(err)),
+			)...,
+		)
+
 		e.becomeFollower()
 
 		e.mu.RLock()
@@ -284,6 +352,11 @@ func (e *kvElection) handleReconnectVerificationFailed(err error) {
 		e.mu.RUnlock()
 
 		if onDemote != nil {
+			log.Info("leader_demoted",
+				append(e.logWithContext(e.ctx),
+					zap.String("reason", "reconnect_verification_failed"),
+				)...,
+			)
 			onDemote()
 		}
 	}

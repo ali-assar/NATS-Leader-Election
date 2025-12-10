@@ -3,6 +3,8 @@ package leader
 import (
 	"context"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -39,6 +41,14 @@ func (e *kvElection) validationLoop(ctx context.Context) {
 
 			if err != nil {
 				consecutiveFailures++
+				log := e.getLogger()
+				log.Warn("token_validation_failed",
+					append(e.logWithContext(ctx),
+						zap.Error(err),
+						zap.String("error_type", classifyErrorType(err)),
+						zap.Int("consecutive_failures", consecutiveFailures),
+					)...,
+				)
 				if consecutiveFailures >= maxFailures {
 					e.handleValidationFailure(err)
 					return
@@ -47,16 +57,37 @@ func (e *kvElection) validationLoop(ctx context.Context) {
 			}
 
 			if !isValid {
+				log := e.getLogger()
+				log.Warn("token_validation_failed",
+					append(e.logWithContext(ctx),
+						zap.Error(ErrTokenInvalid),
+						zap.String("error_type", "token_invalid"),
+					)...,
+				)
 				e.handleValidationFailure(ErrTokenInvalid)
 				return
 			}
 
-			consecutiveFailures = 0
+			if consecutiveFailures > 0 {
+				consecutiveFailures = 0
+				log := e.getLogger()
+				log.Debug("token_validation_recovered",
+					append(e.logWithContext(ctx))...,
+				)
+			}
 		}
 	}
 }
 
 func (e *kvElection) handleValidationFailure(err error) {
+	log := e.getLogger()
+	log.Error("demoting_due_to_validation_failure",
+		append(e.logWithContext(e.ctx),
+			zap.Error(err),
+			zap.String("error_type", classifyErrorType(err)),
+		)...,
+	)
+
 	e.becomeFollower()
 
 	e.mu.RLock()
@@ -64,6 +95,11 @@ func (e *kvElection) handleValidationFailure(err error) {
 	e.mu.RUnlock()
 
 	if onDemote != nil {
+		log.Info("leader_demoted",
+			append(e.logWithContext(e.ctx),
+				zap.String("reason", "token_validation_failure"),
+			)...,
+		)
 		onDemote()
 	}
 }

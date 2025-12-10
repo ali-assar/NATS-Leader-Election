@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 // Election state constants
@@ -132,6 +133,16 @@ func (e *kvElection) Start(ctx context.Context) error {
 	e.state.Store(StateCandidate)
 	e.lastTransition.Store(time.Now())
 
+	// Log election started
+	log := e.getLogger()
+	log.Info("election_started",
+		append(e.logWithContext(ctx),
+			zap.String("state", StateCandidate),
+			zap.Duration("ttl", e.cfg.TTL),
+			zap.Duration("heartbeat_interval", e.cfg.HeartbeatInterval),
+		)...,
+	)
+
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
@@ -147,6 +158,13 @@ func (e *kvElection) Start(ctx context.Context) error {
 func (e *kvElection) attemptAcquireWithRetry(ctx context.Context) {
 	jitterRange := jitterMax - jitterMin
 	initialJitter := jitterMin + time.Duration(rand.Float64()*float64(jitterRange))
+
+	log := e.getLogger()
+	log.Debug("attempting_acquire_with_retry",
+		append(e.logWithContext(ctx),
+			zap.Duration("initial_jitter", initialJitter),
+		)...,
+	)
 
 	select {
 	case <-ctx.Done():
@@ -167,11 +185,24 @@ func (e *kvElection) attemptAcquireWithRetry(ctx context.Context) {
 		}
 
 		if retry == maxRetries {
+			log.Warn("acquire_failed_max_retries",
+				append(e.logWithContext(ctx),
+					zap.Int("max_retries", maxRetries),
+					zap.Error(err),
+				)...,
+			)
 			e.becomeFollower()
 			return
 		}
 
 		finalBackoff := CalculateBackoff(DefaultBackoffConfig(), retry)
+		log.Debug("acquire_retry",
+			append(e.logWithContext(ctx),
+				zap.Int("retry", retry),
+				zap.Duration("backoff", finalBackoff),
+				zap.Error(err),
+			)...,
+		)
 
 		select {
 		case <-ctx.Done():
@@ -190,6 +221,13 @@ func (e *kvElection) attemptAcquire() error {
 	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
+		log := e.getLogger()
+		log.Error("acquire_failed",
+			append(e.logWithContext(e.ctx),
+				zap.Error(err),
+				zap.String("error_type", "marshal_error"),
+			)...,
+		)
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
@@ -201,8 +239,23 @@ func (e *kvElection) attemptAcquire() error {
 
 	rev, err := e.kv.Create(e.key, payloadBytes, opts...)
 	if err != nil {
+		log := e.getLogger()
+		log.Debug("acquire_failed",
+			append(e.logWithContext(e.ctx),
+				zap.Error(err),
+				zap.String("error_type", classifyErrorType(err)),
+			)...,
+		)
 		return err
 	}
+
+	log := e.getLogger()
+	log.Info("acquire_success",
+		append(e.logWithContext(e.ctx),
+			zap.String("token", token),
+			zap.Uint64("revision", rev),
+		)...,
+	)
 
 	e.becomeLeader(token, rev)
 	return nil
@@ -212,6 +265,13 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	fromState := StateInit
+	if s := e.state.Load(); s != nil {
+		if str, ok := s.(string); ok {
+			fromState = str
+		}
+	}
+
 	e.isLeader.Store(true)
 	e.leaderID.Store(e.cfg.InstanceID)
 	e.token.Store(token)
@@ -219,6 +279,17 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 	e.state.Store(StateLeader)
 	e.lastHeartbeat.Store(time.Now())
 	e.lastTransition.Store(time.Now())
+
+	// Log state transition
+	log := e.getLogger()
+	log.Info("state_transition",
+		append(e.logWithContext(e.ctx),
+			zap.String("from_state", fromState),
+			zap.String("to_state", StateLeader),
+			zap.String("token", token),
+			zap.Uint64("revision", rev),
+		)...,
+	)
 
 	// Start heartbeat loop (always)
 	e.wg.Add(1)
@@ -236,12 +307,22 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 
 	// Call onPromote callback (if set)
 	if e.onPromote != nil {
+		log.Info("leader_promoted",
+			append(e.logWithContext(e.ctx),
+				zap.String("token", token),
+			)...,
+		)
 		e.wg.Add(1)
 		go func() {
 			defer e.wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					// Panic occurred in user callback - log it when logger is integrated
+					log := e.getLogger()
+					log.Error("onpromote_callback_panic",
+						append(e.logWithContext(e.ctx),
+							zap.Any("panic", r),
+						)...,
+					)
 				}
 			}()
 			// Create context that is cancelled when election stops
@@ -256,9 +337,25 @@ func (e *kvElection) becomeFollower() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
+	fromState := StateInit
+	if s := e.state.Load(); s != nil {
+		if str, ok := s.(string); ok {
+			fromState = str
+		}
+	}
+
 	e.isLeader.Store(false)
 	e.state.Store(StateFollower)
 	e.lastTransition.Store(time.Now())
+
+	// Log state transition
+	log := e.getLogger()
+	log.Info("state_transition",
+		append(e.logWithContext(e.ctx),
+			zap.String("from_state", fromState),
+			zap.String("to_state", StateFollower),
+		)...,
+	)
 
 	if e.ctx != nil && !e.watcherRunning.Load() {
 		e.watcherRunning.Store(true)
@@ -297,6 +394,14 @@ func (e *kvElection) Stop() error {
 
 	e.mu.Unlock()
 
+	// Log election stopped
+	log := e.getLogger()
+	log.Info("election_stopped",
+		append(e.logWithContext(e.ctx),
+			zap.Bool("was_leader", wasLeader),
+		)...,
+	)
+
 	// Stop connection monitoring
 	if e.connectionMonitor != nil {
 		_ = e.connectionMonitor.Stop()
@@ -314,6 +419,11 @@ func (e *kvElection) Stop() error {
 	}
 
 	if wasLeader && e.onDemote != nil {
+		log.Info("leader_demoted",
+			append(e.logWithContext(e.ctx),
+				zap.String("reason", "stop"),
+			)...,
+		)
 		e.onDemote()
 	}
 
@@ -375,9 +485,21 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 		// All goroutines finished
 	case <-time.After(timeout):
 		// Timeout exceeded
+		log := e.getLogger()
+		log.Warn("shutdown_timeout",
+			append(e.logWithContext(ctx),
+				zap.Duration("timeout", timeout),
+			)...,
+		)
 		return fmt.Errorf("shutdown timeout exceeded: %v", timeout)
 	case <-ctx.Done():
 		// Context cancelled
+		log := e.getLogger()
+		log.Warn("shutdown_cancelled",
+			append(e.logWithContext(ctx),
+				zap.Error(ctx.Err()),
+			)...,
+		)
 		return ctx.Err()
 	}
 
@@ -386,16 +508,47 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 	e.ctx = nil
 	e.mu.Unlock()
 
+	// Log shutdown completed
+	log := e.getLogger()
+	log.Info("election_stopped",
+		append(e.logWithContext(ctx),
+			zap.Bool("was_leader", wasLeader),
+			zap.Bool("key_deleted", opts.DeleteKey && wasLeader),
+		)...,
+	)
+
 	// Delete key if requested and was leader
 	if opts.DeleteKey && wasLeader {
 		if err := e.kv.Delete(e.key); err != nil {
+			log := e.getLogger()
+			log.Warn("key_deletion_failed",
+				append(e.logWithContext(ctx),
+					zap.Error(err),
+					zap.String("key", e.key),
+				)...,
+			)
 			// Log error but don't fail shutdown
 			// Key will expire via TTL anyway
+		} else {
+			log := e.getLogger()
+			log.Info("key_deleted",
+				append(e.logWithContext(ctx),
+					zap.String("key", e.key),
+				)...,
+			)
 		}
 	}
 
 	// Call OnDemote callback if was leader
 	if wasLeader && e.onDemote != nil {
+		log := e.getLogger()
+		log.Info("leader_demoted",
+			append(e.logWithContext(ctx),
+				zap.String("reason", "stop_with_context"),
+				zap.Bool("wait_for_demote", opts.WaitForDemote),
+			)...,
+		)
+
 		e.mu.RLock()
 		onDemote := e.onDemote
 		e.mu.RUnlock()
@@ -414,6 +567,11 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 					// Callback completed
 				case <-time.After(timeout):
 					// Timeout exceeded
+					log.Warn("ondemote_callback_timeout",
+						append(e.logWithContext(ctx),
+							zap.Duration("timeout", timeout),
+						)...,
+					)
 					return fmt.Errorf("OnDemote callback timeout exceeded: %v", timeout)
 				case <-ctx.Done():
 					// Context cancelled
@@ -514,12 +672,20 @@ func (e *kvElection) OnDemote(fn func()) {
 func (e *kvElection) validateToken(ctx context.Context) (bool, error) {
 	localToken := e.Token()
 	if localToken == "" {
-		return false, &TokenValidationError{
+		err := &TokenValidationError{
 			LocalToken: localToken,
 			LeaderID:   e.cfg.InstanceID,
 			Reason:     "no token",
 			Err:        nil,
 		}
+		log := e.getLogger()
+		log.Warn("token_validation_failed",
+			append(e.logWithContext(ctx),
+				zap.Error(err),
+				zap.String("error_type", "no_token"),
+			)...,
+		)
+		return false, err
 	}
 
 	// Check context before making the call
@@ -606,13 +772,21 @@ func (e *kvElection) validateToken(ctx context.Context) (bool, error) {
 	}
 
 	if localToken != kvToken {
-		return false, &TokenValidationError{
+		err := &TokenValidationError{
 			LocalToken: localToken,
 			KvToken:    kvToken,
 			LeaderID:   e.cfg.InstanceID,
 			Reason:     "token mismatch",
 			Err:        nil,
 		}
+		log := e.getLogger()
+		log.Warn("token_validation_failed",
+			append(e.logWithContext(ctx),
+				zap.Error(err),
+				zap.String("error_type", "token_mismatch"),
+			)...,
+		)
+		return false, err
 	}
 
 	leaderIDInterface, ok := payload["id"]
@@ -638,13 +812,22 @@ func (e *kvElection) validateToken(ctx context.Context) (bool, error) {
 	}
 
 	if leaderID != e.cfg.InstanceID {
-		return false, &TokenValidationError{
+		err := &TokenValidationError{
 			LocalToken: localToken,
 			KvToken:    kvToken,
 			LeaderID:   e.cfg.InstanceID,
 			Reason:     "leader ID mismatch",
 			Err:        nil,
 		}
+		log := e.getLogger()
+		log.Warn("token_validation_failed",
+			append(e.logWithContext(ctx),
+				zap.Error(err),
+				zap.String("error_type", "leader_id_mismatch"),
+				zap.String("kv_leader_id", leaderID),
+			)...,
+		)
+		return false, err
 	}
 
 	return true, nil
