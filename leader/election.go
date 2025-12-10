@@ -32,6 +32,10 @@ type ElectionConfig struct {
 	ValidationInterval    time.Duration
 	DisconnectGracePeriod time.Duration //if zero, uses default (3x HeartbeatInterval, minimum 5 seconds).
 
+	// Observability (OPTIONAL)
+	// If Metrics is nil, metrics recording is disabled.
+	Metrics Metrics // Optional: nil = disabled, non-nil = enabled
+
 	// Health checking (OPTIONAL)
 	// If HealthChecker is nil, health checking is disabled.
 	// If provided, health is checked before each heartbeat.
