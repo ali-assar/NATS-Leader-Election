@@ -98,7 +98,6 @@ func newKVElection(nc JetStreamProvider, cfg ElectionConfig) (*kvElection, error
 	e.lastTransition.Store(time.Time{})
 	e.leaderStartTime.Store(time.Time{})
 
-	// Initialize connection monitor if NATS connection is available
 	if connProvider, ok := nc.(NATSConnectionProvider); ok {
 		if conn := connProvider.NATSConnection(); conn != nil {
 			e.connectionMonitor = NewNATSConnectionMonitor(conn)
@@ -188,18 +187,15 @@ func (e *kvElection) Start(ctx context.Context) error {
 
 	e.ctx, e.cancel = context.WithCancel(ctx)
 
-	// Start connection monitoring if available
 	if e.connectionMonitor != nil {
 		if err := e.connectionMonitor.Start(ctx); err != nil {
 			e.cancel()
 			return fmt.Errorf("failed to start connection monitor: %w", err)
 		}
 
-		// Register disconnect and reconnect handlers
 		e.connectionMonitor.OnDisconnect(e.disconnectHandler.handleDisconnect)
 		e.connectionMonitor.OnReconnect(e.handleReconnect)
 
-		// Set initial connection status metric
 		if e.cfg.Metrics != nil {
 			e.cfg.Metrics.SetConnectionStatus(1, e.getMetricsLabels())
 		}
@@ -208,7 +204,6 @@ func (e *kvElection) Start(ctx context.Context) error {
 	e.state.Store(StateCandidate)
 	e.lastTransition.Store(time.Now())
 
-	// Log election started
 	log := e.getLogger()
 	log.Info("election_started",
 		append(e.logWithContext(ctx),
@@ -222,7 +217,6 @@ func (e *kvElection) Start(ctx context.Context) error {
 	go func() {
 		defer e.wg.Done()
 		if err := e.attemptAcquire(); err != nil {
-			// Record failed acquire attempt (when called directly from Start)
 			e.recordAcquireAttempt("failed")
 			e.recordFailure(classifyErrorType(err))
 			e.becomeFollower()
@@ -232,7 +226,8 @@ func (e *kvElection) Start(ctx context.Context) error {
 	return nil
 }
 
-// attemptAcquireWithRetry attempts to acquire leadership with jitter and exponential backoff.
+// attemptAcquireWithRetry attempts to acquire leadership with initial jitter and exponential backoff.
+// The jitter prevents thundering herd problems when multiple followers detect leader failure simultaneously.
 func (e *kvElection) attemptAcquireWithRetry(ctx context.Context) {
 	jitterRange := jitterMax - jitterMin
 	initialJitter := jitterMin + time.Duration(rand.Float64()*float64(jitterRange))
@@ -313,7 +308,6 @@ func (e *kvElection) attemptAcquire() error {
 		return fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	// Use TTL if configured (NATS KV uses nats.WithMaxAge)
 	var opts []interface{}
 	if e.cfg.TTL > 0 {
 		opts = append(opts, e.cfg.TTL)
@@ -365,13 +359,11 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 	now := time.Now()
 	e.lastHeartbeat.Store(now)
 	e.lastTransition.Store(now)
-	e.leaderStartTime.Store(now) // Track when leadership started
+	e.leaderStartTime.Store(now)
 
-	// Record metrics
 	e.recordTransition(fromState, StateLeader)
 	e.updateIsLeaderMetric()
 
-	// Log state transition
 	log := e.getLogger()
 	log.Info("state_transition",
 		append(e.logWithContext(e.ctx),
@@ -382,21 +374,18 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 		)...,
 	)
 
-	// Start heartbeat loop (always)
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
 		e.heartbeatLoop(e.ctx)
 	}()
 
-	// Start validation loop (always)
 	e.wg.Add(1)
 	go func() {
 		defer e.wg.Done()
 		e.validationLoop(e.ctx)
 	}()
 
-	// Call onPromote callback (if set)
 	if e.onPromote != nil {
 		log.Info("leader_promoted",
 			append(e.logWithContext(e.ctx),
@@ -416,7 +405,6 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 					)
 				}
 			}()
-			// Create context that is cancelled when election stops
 			promoteCtx, cancel := context.WithCancel(e.ctx)
 			defer cancel()
 			e.onPromote(promoteCtx, token)
@@ -440,17 +428,14 @@ func (e *kvElection) becomeFollower() {
 	e.state.Store(StateFollower)
 	e.lastTransition.Store(time.Now())
 
-	// Record leader duration if we were a leader
 	if wasLeader {
 		e.recordLeaderDuration()
-		e.leaderStartTime.Store(time.Time{}) // Reset
+		e.leaderStartTime.Store(time.Time{})
 	}
 
-	// Record metrics
 	e.recordTransition(fromState, StateFollower)
 	e.updateIsLeaderMetric()
 
-	// Log state transition
 	log := e.getLogger()
 	log.Info("state_transition",
 		append(e.logWithContext(e.ctx),
@@ -480,7 +465,6 @@ func (e *kvElection) Stop() error {
 
 	wasLeader := e.isLeader.Load()
 
-	// Get current state for transition metric
 	currentState := StateInit
 	if s := e.state.Load(); s != nil {
 		if str, ok := s.(string); ok {
@@ -492,10 +476,9 @@ func (e *kvElection) Stop() error {
 		e.cancel()
 	}
 
-	// Record leader duration if we were a leader
 	if wasLeader {
 		e.recordLeaderDuration()
-		e.leaderStartTime.Store(time.Time{}) // Reset
+		e.leaderStartTime.Store(time.Time{})
 	}
 
 	e.isLeader.Store(false)
@@ -503,20 +486,15 @@ func (e *kvElection) Stop() error {
 	e.lastTransition.Store(time.Now())
 	e.watcherRunning.Store(false)
 
-	// Record transition to STOPPED
 	e.recordTransition(currentState, StateStopped)
-
-	// Update metrics
 	e.updateIsLeaderMetric()
 
-	// Stop disconnect handler timer
 	if e.disconnectHandler != nil {
 		e.disconnectHandler.stop()
 	}
 
 	e.mu.Unlock()
 
-	// Log election stopped
 	log := e.getLogger()
 	log.Info("election_stopped",
 		append(e.logWithContext(e.ctx),
@@ -524,7 +502,6 @@ func (e *kvElection) Stop() error {
 		)...,
 	)
 
-	// Stop connection monitoring
 	if e.connectionMonitor != nil {
 		_ = e.connectionMonitor.Stop()
 	}
@@ -562,7 +539,6 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 
 	wasLeader := e.isLeader.Load()
 
-	// Get current state for transition metric
 	currentState := StateInit
 	if s := e.state.Load(); s != nil {
 		if str, ok := s.(string); ok {
@@ -570,13 +546,11 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 		}
 	}
 
-	// Record leader duration if we were a leader
 	if wasLeader {
 		e.recordLeaderDuration()
-		e.leaderStartTime.Store(time.Time{}) // Reset
+		e.leaderStartTime.Store(time.Time{})
 	}
 
-	// Cancel election context
 	if e.cancel != nil {
 		e.cancel()
 	}
@@ -586,36 +560,29 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 	e.lastTransition.Store(time.Now())
 	e.watcherRunning.Store(false)
 
-	// Record transition to STOPPED
 	e.recordTransition(currentState, StateStopped)
-
-	// Update metrics
 	e.updateIsLeaderMetric()
 
-	// Stop disconnect handler timer
 	if e.disconnectHandler != nil {
 		e.disconnectHandler.stop()
 	}
 
 	e.mu.Unlock()
 
-	// Stop connection monitoring
 	if e.connectionMonitor != nil {
 		_ = e.connectionMonitor.Stop()
 	}
 
-	// Determine timeout
 	timeout := opts.Timeout
 	if timeout == 0 {
 		deadline, ok := ctx.Deadline()
 		if ok {
 			timeout = time.Until(deadline)
 		} else {
-			timeout = 5 * time.Second // Default
+			timeout = 5 * time.Second
 		}
 	}
 
-	// Wait for goroutines to finish
 	done := make(chan struct{})
 	go func() {
 		e.wg.Wait()
@@ -624,9 +591,7 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 
 	select {
 	case <-done:
-		// All goroutines finished
 	case <-time.After(timeout):
-		// Timeout exceeded
 		log := e.getLogger()
 		log.Warn("shutdown_timeout",
 			append(e.logWithContext(ctx),
@@ -635,7 +600,6 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 		)
 		return fmt.Errorf("shutdown timeout exceeded: %v", timeout)
 	case <-ctx.Done():
-		// Context cancelled
 		log := e.getLogger()
 		log.Warn("shutdown_cancelled",
 			append(e.logWithContext(ctx),
@@ -645,12 +609,10 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 		return ctx.Err()
 	}
 
-	// Clear context to mark as stopped (after goroutines finish)
 	e.mu.Lock()
 	e.ctx = nil
 	e.mu.Unlock()
 
-	// Log shutdown completed
 	log := e.getLogger()
 	log.Info("election_stopped",
 		append(e.logWithContext(ctx),
@@ -659,7 +621,6 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 		)...,
 	)
 
-	// Delete key if requested and was leader
 	if opts.DeleteKey && wasLeader {
 		if err := e.kv.Delete(e.key); err != nil {
 			log := e.getLogger()
@@ -669,8 +630,6 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 					zap.String("key", e.key),
 				)...,
 			)
-			// Log error but don't fail shutdown
-			// Key will expire via TTL anyway
 		} else {
 			log := e.getLogger()
 			log.Info("key_deleted",
@@ -681,7 +640,6 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 		}
 	}
 
-	// Call OnDemote callback if was leader
 	if wasLeader && e.onDemote != nil {
 		log := e.getLogger()
 		log.Info("leader_demoted",
@@ -706,9 +664,7 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 
 				select {
 				case <-done:
-					// Callback completed
 				case <-time.After(timeout):
-					// Timeout exceeded
 					log.Warn("ondemote_callback_timeout",
 						append(e.logWithContext(ctx),
 							zap.Duration("timeout", timeout),
@@ -720,7 +676,6 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 					return ctx.Err()
 				}
 			} else {
-				// Call but don't wait
 				go onDemote()
 			}
 		}
@@ -830,7 +785,6 @@ func (e *kvElection) validateToken(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	// Check context before making the call
 	select {
 	case <-ctx.Done():
 		return false, &TokenValidationError{
@@ -928,7 +882,6 @@ func (e *kvElection) validateToken(ctx context.Context) (bool, error) {
 				zap.String("error_type", "token_mismatch"),
 			)...,
 		)
-		// Record token validation failure
 		if e.cfg.Metrics != nil {
 			e.cfg.Metrics.IncTokenValidationFailures(e.getMetricsLabels())
 		}
@@ -973,7 +926,6 @@ func (e *kvElection) validateToken(ctx context.Context) (bool, error) {
 				zap.String("kv_leader_id", leaderID),
 			)...,
 		)
-		// Record token validation failure
 		if e.cfg.Metrics != nil {
 			e.cfg.Metrics.IncTokenValidationFailures(e.getMetricsLabels())
 		}

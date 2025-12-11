@@ -49,7 +49,6 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 					}
 					continue
 				}
-				// Reset on success
 				if e.healthFailureCount.Load() > 0 {
 					e.healthFailureCount.Store(0)
 					log := e.getLogger()
@@ -97,7 +96,6 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 			resultChan := make(chan updateResult, 1)
 
 			go func() {
-				// Pass TTL option to Update to refresh the key's expiration
 				var opts []interface{}
 				if e.cfg.TTL > 0 {
 					opts = append(opts, e.cfg.TTL)
@@ -123,7 +121,6 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 				log := e.getLogger()
 				errorType := classifyErrorType(updateErr)
 
-				// Record heartbeat duration (failure)
 				if e.cfg.Metrics != nil {
 					duration := time.Since(heartbeatStartTime)
 					labels := e.getMetricsLabels()
@@ -173,7 +170,6 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 				)
 			}
 
-			// Record successful heartbeat duration
 			if e.cfg.Metrics != nil {
 				duration := time.Since(heartbeatStartTime)
 				labels := e.getMetricsLabels()

@@ -139,7 +139,6 @@ func IsPermanentError(err error) bool {
 		return false
 	}
 
-	// Check for timeout errors (transient, not permanent)
 	if _, ok := err.(*TimeoutError); ok {
 		return false
 	}
@@ -149,7 +148,6 @@ func IsPermanentError(err error) bool {
 
 	errMsg := strings.ToLower(err.Error())
 
-	// Check for permanent error patterns
 	permanentPatterns := []string{
 		"revision mismatch",
 		"key not found",
@@ -186,24 +184,20 @@ func IsTransientError(err error) bool {
 		return false
 	}
 
-	// Permanent errors are not transient
 	if IsPermanentError(err) {
 		return false
 	}
 
-	// Check for context timeout (transient)
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 
-	// Check for TimeoutError (transient)
 	if _, ok := err.(*TimeoutError); ok {
 		return true
 	}
 
 	errMsg := strings.ToLower(err.Error())
 
-	// Check for transient error patterns
 	transientPatterns := []string{
 		"timeout",
 		"deadline exceeded",
@@ -222,7 +216,6 @@ func IsTransientError(err error) bool {
 		}
 	}
 
-	// Default: if not permanent, assume transient (conservative approach)
 	return true
 }
 

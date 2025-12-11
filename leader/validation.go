@@ -3,7 +3,6 @@ package leader
 import "fmt"
 
 func validateConfig(cfg ElectionConfig) error {
-	// Check required fields
 	if cfg.Bucket == "" {
 		return NewValidationError("Bucket", cfg.Bucket, "bucket name is required")
 	}
@@ -14,18 +13,15 @@ func validateConfig(cfg ElectionConfig) error {
 		return NewValidationError("InstanceID", cfg.InstanceID, "instance ID is required")
 	}
 
-	// Check TTL
 	if cfg.TTL <= 0 {
 		return NewValidationError("TTL", cfg.TTL, "TTL must be positive")
 	}
 
-	// Check HeartbeatInterval
 	if cfg.HeartbeatInterval <= 0 {
 		return NewValidationError("HeartbeatInterval", cfg.HeartbeatInterval,
 			"heartbeat interval must be positive")
 	}
 
-	// Check TTL/HeartbeatInterval ratio (minimum 3x for safety)
 	minTTL := cfg.HeartbeatInterval * 3
 	if cfg.TTL < minTTL {
 		return NewValidationError("TTL", cfg.TTL,
@@ -42,7 +38,6 @@ func validateConfig(cfg ElectionConfig) error {
 		}
 	}
 
-	// Check DisconnectGracePeriod (if set)
 	if cfg.DisconnectGracePeriod > 0 {
 		minGracePeriod := cfg.HeartbeatInterval * 2
 		if cfg.DisconnectGracePeriod < minGracePeriod {

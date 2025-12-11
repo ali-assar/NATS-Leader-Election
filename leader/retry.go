@@ -53,11 +53,9 @@ func RetryWithBackoff(ctx context.Context, cfg RetryConfig, fn func() error) err
 			return ctx.Err()
 		}
 
-		// Execute the function
 		var err error
 		if cfg.CircuitBreaker != nil {
 			cbErr := cfg.CircuitBreaker.Call(fn)
-			// Check if circuit breaker is open (don't retry)
 			if cbErr != nil && cbErr.Error() == "circuit breaker is open" {
 				return cbErr
 			}
@@ -74,14 +72,10 @@ func RetryWithBackoff(ctx context.Context, cfg RetryConfig, fn func() error) err
 			return err
 		}
 
-		// Check max attempts after the call (attempt is 0-indexed)
-		// If MaxAttempts=3, we want attempts 0, 1, 2 (3 total)
-		// So we check if attempt >= MaxAttempts-1 after incrementing
 		if cfg.MaxAttempts > 0 && attempt >= cfg.MaxAttempts-1 {
 			return fmt.Errorf("max attempts (%d) exceeded: %w", cfg.MaxAttempts, err)
 		}
 
-		// Calculate backoff for current attempt
 		backoff := CalculateBackoff(cfg.BackoffConfig, attempt)
 		select {
 		case <-ctx.Done():

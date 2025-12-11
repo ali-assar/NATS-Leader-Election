@@ -45,7 +45,8 @@ func (e *kvElection) watchLoop(ctx context.Context) {
 	}
 }
 
-// handleWatchEvent processes watch events and triggers re-election when appropriate.
+// handleWatchEvent processes watch events and triggers re-election when the key is deleted
+// or becomes empty. It also updates the leader ID when a new leader is detected.
 func (e *kvElection) handleWatchEvent(entry Entry) {
 	if entry == nil {
 		log := e.getLogger()

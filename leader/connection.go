@@ -113,15 +113,9 @@ func (m *natsConnectionMonitor) handleDisconnect(nc *nats.Conn) {
 	handler := m.disconnectHandler
 	m.mu.RUnlock()
 
-	// Note: Logging would require access to election instance
-	// This is handled in disconnectHandler.handleDisconnect()
-
 	if handler != nil {
 		handler()
 	}
-
-	// Note: Connection status metric update is handled in disconnectHandler
-	// to have access to election instance for metrics labels
 }
 
 func (m *natsConnectionMonitor) handleReconnect(nc *nats.Conn) {
@@ -130,9 +124,6 @@ func (m *natsConnectionMonitor) handleReconnect(nc *nats.Conn) {
 	m.mu.RLock()
 	handler := m.reconnectHandler
 	m.mu.RUnlock()
-
-	// Note: Logging would require access to election instance
-	// This is handled in handleReconnect()
 
 	if handler != nil {
 		handler()
@@ -170,7 +161,6 @@ func (d *disconnectHandler) handleDisconnect() {
 		}
 	}
 
-	// Log disconnection
 	log := d.election.getLogger()
 	log.Warn("connection_disconnected",
 		append(d.election.logWithContext(d.election.ctx),
@@ -178,7 +168,6 @@ func (d *disconnectHandler) handleDisconnect() {
 		)...,
 	)
 
-	// Update connection status metric
 	if d.election.cfg.Metrics != nil {
 		d.election.cfg.Metrics.SetConnectionStatus(0, d.election.getMetricsLabels())
 	}
@@ -260,7 +249,6 @@ func (e *kvElection) handleReconnect() {
 		append(e.logWithContext(e.ctx))...,
 	)
 
-	// Update connection status metric
 	if e.cfg.Metrics != nil {
 		e.cfg.Metrics.SetConnectionStatus(1, e.getMetricsLabels())
 	}
@@ -295,7 +283,6 @@ func (e *kvElection) verifyLeadershipAfterReconnect() {
 
 	log := e.getLogger()
 
-	// Test connection with a simple operation
 	_, err := e.kv.Get(e.key)
 	if err != nil {
 		log.Error("reconnect_verification_failed",
@@ -304,7 +291,6 @@ func (e *kvElection) verifyLeadershipAfterReconnect() {
 				zap.String("error_type", "connection_test_failed"),
 			)...,
 		)
-		// Connection not working, demote
 		e.handleReconnectVerificationFailed(err)
 		return
 	}
@@ -319,7 +305,6 @@ func (e *kvElection) verifyLeadershipAfterReconnect() {
 				zap.Bool("is_valid", isValid),
 			)...,
 		)
-		// Token invalid, demote
 		e.handleReconnectVerificationFailed(err)
 		return
 	}

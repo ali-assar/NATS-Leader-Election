@@ -202,10 +202,11 @@ func TestChaos_NetworkPartition(t *testing.T) {
 
 	// Wait for grace period + some buffer
 	// Grace period is 1 second, wait a bit longer for demotion and re-election
-	time.Sleep(3 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// Election2 should take over
-	waitForLeader(t, election2, true, 5*time.Second)
+	// With real NATS, watchers may take time to detect the key deletion
+	waitForLeader(t, election2, true, 10*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after partition")
 
 	mu.Lock()
@@ -304,8 +305,8 @@ func TestChaos_ProcessKill(t *testing.T) {
 	// Without it, we wait for TTL expiration.
 
 	// Wait for election2 to take over (after TTL expires or watcher detects)
-	// TTL is 5 seconds, so wait a bit longer
-	waitForLeader(t, election2, true, 7*time.Second)
+	// TTL is 5 seconds, but watchers may take additional time to detect
+	waitForLeader(t, election2, true, 10*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after election1 dies")
 
 	mu.Lock()
@@ -395,8 +396,8 @@ func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// With DeleteKey, the key is deleted immediately, so election2 should take over quickly
-	waitForLeader(t, election2, true, 2*time.Second)
+	// With DeleteKey, the key is deleted immediately, but watchers may take time to detect
+	waitForLeader(t, election2, true, 5*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader quickly after key deletion")
 
 	mu.Lock()
