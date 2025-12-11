@@ -2,6 +2,7 @@ package leader
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -9,6 +10,11 @@ import (
 	"github.com/ali-assar/NATS-Leader-Election/internal/natsmock"
 	"github.com/stretchr/testify/assert"
 )
+
+// contains is a case-insensitive string contains helper
+func contains(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
 
 func TestStopWithContext_KeyDeletion(t *testing.T) {
 	cfg := ElectionConfig{
@@ -141,7 +147,11 @@ func TestStopWithContext_Timeout(t *testing.T) {
 	})
 
 	assert.Error(t, err, "Should return error on timeout")
-	assert.Contains(t, err.Error(), "timeout", "Error should mention timeout")
+	// Accept either "timeout" or "deadline exceeded" as both indicate timeout
+	errMsg := err.Error()
+	assert.True(t,
+		contains(errMsg, "timeout") || contains(errMsg, "deadline exceeded"),
+		"Error should mention timeout or deadline exceeded, got: %s", errMsg)
 	assert.True(t, demoteBlocked.Load(), "OnDemote should be called")
 
 	// Unblock to allow cleanup
@@ -238,7 +248,7 @@ func TestStopWithContext_NotLeader(t *testing.T) {
 	// key deletion and OnDemote are not performed.
 	// In a single-instance scenario, the instance will become leader,
 	// so we test the logic by checking wasLeader flag behavior.
-	
+
 	cfg := ElectionConfig{
 		Bucket:             "leaders",
 		Group:              "test-group",
@@ -284,7 +294,7 @@ func TestStopWithContext_NotLeader(t *testing.T) {
 	// (Note: In this test, the instance might have briefly been leader,
 	// so we just verify the logic works correctly)
 	time.Sleep(50 * time.Millisecond)
-	
+
 	// The key deletion check is less relevant here since the instance
 	// might have created the key before we set it to follower
 	// The important part is that the logic correctly checks wasLeader
@@ -360,4 +370,3 @@ func TestStopWithContext_AlreadyStopped(t *testing.T) {
 	assert.Error(t, err, "Should return error when already stopped")
 	assert.Equal(t, ErrAlreadyStopped, err, "Error should be ErrAlreadyStopped")
 }
-

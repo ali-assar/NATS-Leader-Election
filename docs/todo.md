@@ -341,13 +341,13 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 13: Implement Observability (Logging & Metrics)
 
-- [ ] **13.1** Create `leader/logger.go` (or use existing logger interface)
+- [x] **13.1** Create `leader/logger.go` (or use existing logger interface)
   - Define logger interface
   - Implement structured logging
   - Add correlation IDs
   - **Learning**: Logging patterns, structured logging, tracing
 
-- [ ] **13.2** Add logging throughout the codebase
+- [x] **13.2** Add logging throughout the codebase
   - Log state transitions
   - Log errors with context
   - Log important events
@@ -355,19 +355,19 @@ This is your step-by-step learning guide. Work through each task in order, under
   - Add strategic log points in election lifecycle (start, stop, promote, demote)
   - **Learning**: Where and how to log, log levels, logger integration
 
-- [ ] **13.3** Create `leader/metrics.go` - Part 1: Structure
+- [x] **13.3** Create `leader/metrics.go` - Part 1: Structure
   - Define metrics interface
   - Set up Prometheus metrics
   - **Learning**: Metrics patterns, Prometheus integration
 
-- [ ] **13.4** Implement all metrics
+- [x] **13.4** Implement all metrics
   - `election_is_leader` (gauge)
   - `election_transitions_total` (counter)
   - `election_heartbeat_duration_seconds` (histogram)
   - All other metrics from readme.md
   - **Learning**: Different metric types, when to use each
 
-- [ ] **13.5** Write tests for metrics
+- [] **13.5** Write tests for metrics
   - Test metrics are recorded correctly
   - Test metric labels
   - **Learning**: Testing observability

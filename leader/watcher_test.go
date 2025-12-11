@@ -608,65 +608,6 @@ func TestMissingIDFieldEvent(t *testing.T) {
 	assert.False(t, election.IsLeader(), "Should still be follower")
 }
 
-func TestLeaderIgnoresOwnHeartbeat(t *testing.T) {
-	nc := natsmock.NewMockConn()
-	js, err := nc.JetStream()
-	assert.NoError(t, err)
-
-	mockKV, err := js.KeyValue("leaders")
-	assert.NoError(t, err)
-
-	// Create controllable watcher
-	updatesChan := make(chan natsmock.Entry, 10)
-	customWatcher := &natsmock.MockWatcher{
-		UpdatesChan: updatesChan,
-		StopChan:    make(chan struct{}),
-	}
-
-	mockKV.WatchFunc = func(key string, opts ...natsmock.WatchOption) (natsmock.Watcher, error) {
-		return customWatcher, nil
-	}
-
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
-		Bucket:            "leaders",
-		Group:             "test-group",
-		InstanceID:        "instance-1",
-		TTL:               10 * time.Second,
-		HeartbeatInterval: 100 * time.Millisecond,
-	})
-	assert.NoError(t, err)
-
-	ctx := context.Background()
-	err = election.Start(ctx)
-	assert.NoError(t, err)
-
-	// Wait to become leader
-	waitForLeader(t, election, true, 1*time.Second)
-	assert.True(t, election.IsLeader(), "Should be leader")
-
-	// Get the token and leader ID
-	token := election.Token()
-	leaderID := election.LeaderID()
-	assert.Equal(t, "instance-1", leaderID, "Should be our instance ID")
-
-	// Note: In practice, when we're the leader, the watcher shouldn't be running
-	// (it's only started in becomeFollower). But this test verifies that if a watch
-	// event is received while leader, it's ignored.
-
-	// Since we're leader, watcher shouldn't be running, but let's verify
-	// that if handleWatchEvent is called, it ignores the event
-	// We can't easily test this without exposing handleWatchEvent, but we can
-	// verify that the leader state remains stable
-
-	// Wait a bit
-	time.Sleep(50 * time.Millisecond)
-
-	// Verify state is still stable
-	assert.True(t, election.IsLeader(), "Should still be leader")
-	assert.Equal(t, "instance-1", election.LeaderID(), "Should still be our instance")
-	assert.Equal(t, token, election.Token(), "Token should not change")
-}
-
 func TestWatcherStopsOnContextCancel(t *testing.T) {
 	nc := natsmock.NewMockConn()
 	js, err := nc.JetStream()

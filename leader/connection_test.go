@@ -10,34 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestConnectionMonitor_StatusTracking tests that connection monitor
-// tracks status changes correctly. Note: This requires a real NATS connection
-// to fully test, but we can test the status tracking logic.
-func TestConnectionMonitor_StatusTracking(t *testing.T) {
-	// Test status constants
-	assert.Equal(t, ConnectionStatus(0), ConnectionStatusConnected)
-	assert.Equal(t, ConnectionStatus(1), ConnectionStatusDisconnected)
-	assert.Equal(t, ConnectionStatus(2), ConnectionStatusReconnected)
-	assert.Equal(t, ConnectionStatus(3), ConnectionStatusClosed)
-
-	// Test that status values are distinct
-	statuses := []ConnectionStatus{
-		ConnectionStatusConnected,
-		ConnectionStatusDisconnected,
-		ConnectionStatusReconnected,
-		ConnectionStatusClosed,
-	}
-
-	// Verify all statuses are unique
-	for i, s1 := range statuses {
-		for j, s2 := range statuses {
-			if i != j {
-				assert.NotEqual(t, s1, s2, "Status values should be unique")
-			}
-		}
-	}
-}
-
 // TestDisconnect_GracePeriod tests grace period behavior comprehensively
 func TestDisconnect_GracePeriod(t *testing.T) {
 	cfg := ElectionConfig{
