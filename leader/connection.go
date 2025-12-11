@@ -119,6 +119,9 @@ func (m *natsConnectionMonitor) handleDisconnect(nc *nats.Conn) {
 	if handler != nil {
 		handler()
 	}
+
+	// Note: Connection status metric update is handled in disconnectHandler
+	// to have access to election instance for metrics labels
 }
 
 func (m *natsConnectionMonitor) handleReconnect(nc *nats.Conn) {
@@ -174,6 +177,11 @@ func (d *disconnectHandler) handleDisconnect() {
 			zap.Duration("grace_period", gracePeriod),
 		)...,
 	)
+
+	// Update connection status metric
+	if d.election.cfg.Metrics != nil {
+		d.election.cfg.Metrics.SetConnectionStatus(0, d.election.getMetricsLabels())
+	}
 
 	// Stop existing timer if any
 	if d.timer != nil {
@@ -252,6 +260,11 @@ func (e *kvElection) handleReconnect() {
 		append(e.logWithContext(e.ctx))...,
 	)
 
+	// Update connection status metric
+	if e.cfg.Metrics != nil {
+		e.cfg.Metrics.SetConnectionStatus(1, e.getMetricsLabels())
+	}
+
 	if e.disconnectHandler.timer != nil {
 		e.disconnectHandler.timer.Stop()
 		e.disconnectHandler.timer = nil
@@ -329,6 +342,10 @@ func (e *kvElection) verifyLeadershipAfterReconnect() {
 	// Update status to Connected after successful verification
 	if e.connectionMonitor != nil {
 		e.connectionMonitor.SetStatus(ConnectionStatusConnected)
+		// Update connection status metric
+		if e.cfg.Metrics != nil {
+			e.cfg.Metrics.SetConnectionStatus(1, e.getMetricsLabels())
+		}
 	}
 }
 

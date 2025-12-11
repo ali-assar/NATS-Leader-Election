@@ -49,6 +49,10 @@ func (e *kvElection) validationLoop(ctx context.Context) {
 						zap.Int("consecutive_failures", consecutiveFailures),
 					)...,
 				)
+				// Record token validation failure
+				if e.cfg.Metrics != nil {
+					e.cfg.Metrics.IncTokenValidationFailures(e.getMetricsLabels())
+				}
 				if consecutiveFailures >= maxFailures {
 					e.handleValidationFailure(err)
 					return
@@ -64,6 +68,10 @@ func (e *kvElection) validationLoop(ctx context.Context) {
 						zap.String("error_type", "token_invalid"),
 					)...,
 				)
+				// Record token validation failure
+				if e.cfg.Metrics != nil {
+					e.cfg.Metrics.IncTokenValidationFailures(e.getMetricsLabels())
+				}
 				e.handleValidationFailure(ErrTokenInvalid)
 				return
 			}

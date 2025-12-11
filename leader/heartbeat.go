@@ -77,6 +77,7 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 						zap.Int("consecutive_failures", consecutiveFailures),
 					)...,
 				)
+				e.recordFailure("marshal_error")
 				if consecutiveFailures >= maxFailures {
 					e.handleHeartbeatFailure(err)
 					return
@@ -117,9 +118,19 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 				updateErr = result.err
 			}
 
+			heartbeatStartTime := time.Now()
 			if updateErr != nil {
 				log := e.getLogger()
 				errorType := classifyErrorType(updateErr)
+
+				// Record heartbeat duration (failure)
+				if e.cfg.Metrics != nil {
+					duration := time.Since(heartbeatStartTime)
+					labels := e.getMetricsLabels()
+					labels["status"] = "failure"
+					e.cfg.Metrics.ObserveHeartbeatDuration(duration, labels)
+				}
+
 				if IsPermanentError(updateErr) {
 					log.Error("heartbeat_failed",
 						append(e.logWithContext(ctx),
@@ -129,6 +140,7 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 							zap.Bool("permanent", true),
 						)...,
 					)
+					e.recordFailure(errorType)
 					e.handleHeartbeatFailure(updateErr)
 					return
 				}
@@ -142,6 +154,7 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 						zap.Int("consecutive_failures", consecutiveFailures),
 					)...,
 				)
+				e.recordFailure(errorType)
 				if consecutiveFailures >= maxFailures {
 					e.handleHeartbeatFailure(updateErr)
 					return
@@ -159,6 +172,15 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 					)...,
 				)
 			}
+
+			// Record successful heartbeat duration
+			if e.cfg.Metrics != nil {
+				duration := time.Since(heartbeatStartTime)
+				labels := e.getMetricsLabels()
+				labels["status"] = "success"
+				e.cfg.Metrics.ObserveHeartbeatDuration(duration, labels)
+			}
+
 			e.lastHeartbeat.Store(time.Now())
 		}
 	}

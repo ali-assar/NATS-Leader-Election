@@ -367,7 +367,7 @@ This is your step-by-step learning guide. Work through each task in order, under
   - All other metrics from readme.md
   - **Learning**: Different metric types, when to use each
 
-- [] **13.5** Write tests for metrics
+- [x] **13.5** Write tests for metrics
   - Test metrics are recorded correctly
   - Test metric labels
   - **Learning**: Testing observability

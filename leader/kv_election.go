@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -45,8 +46,9 @@ type kvElection struct {
 	state    atomic.Value
 	mu       sync.RWMutex
 
-	lastHeartbeat  atomic.Value
-	lastTransition atomic.Value
+	lastHeartbeat   atomic.Value
+	lastTransition  atomic.Value
+	leaderStartTime atomic.Value // Track when leadership started for duration metric
 
 	watcherRunning atomic.Bool
 
@@ -94,6 +96,7 @@ func newKVElection(nc JetStreamProvider, cfg ElectionConfig) (*kvElection, error
 	e.state.Store(StateInit)
 	e.lastHeartbeat.Store(time.Time{})
 	e.lastTransition.Store(time.Time{})
+	e.leaderStartTime.Store(time.Time{})
 
 	// Initialize connection monitor if NATS connection is available
 	if connProvider, ok := nc.(NATSConnectionProvider); ok {
@@ -106,6 +109,73 @@ func newKVElection(nc JetStreamProvider, cfg ElectionConfig) (*kvElection, error
 	}
 
 	return e, nil
+}
+
+// getMetricsLabels returns the standard Prometheus labels for metrics
+func (e *kvElection) getMetricsLabels() prometheus.Labels {
+	return prometheus.Labels{
+		"role":        e.cfg.Group,
+		"instance_id": e.cfg.InstanceID,
+		"bucket":      e.cfg.Bucket,
+	}
+}
+
+// recordTransition records a state transition metric
+func (e *kvElection) recordTransition(fromState, toState string) {
+	if e.cfg.Metrics == nil {
+		return
+	}
+	labels := e.getMetricsLabels()
+	labels["from_state"] = fromState
+	labels["to_state"] = toState
+	e.cfg.Metrics.IncTransitions(labels)
+}
+
+// recordFailure records a failure metric
+func (e *kvElection) recordFailure(errorType string) {
+	if e.cfg.Metrics == nil {
+		return
+	}
+	labels := e.getMetricsLabels()
+	labels["error_type"] = errorType
+	e.cfg.Metrics.IncFailures(labels)
+}
+
+// recordAcquireAttempt records an acquisition attempt metric
+func (e *kvElection) recordAcquireAttempt(status string) {
+	if e.cfg.Metrics == nil {
+		return
+	}
+	labels := e.getMetricsLabels()
+	labels["status"] = status
+	e.cfg.Metrics.IncAcquireAttempts(labels)
+}
+
+// updateIsLeaderMetric updates the is_leader gauge metric
+func (e *kvElection) updateIsLeaderMetric() {
+	if e.cfg.Metrics == nil {
+		return
+	}
+	value := float64(0)
+	if e.isLeader.Load() {
+		value = 1
+	}
+	e.cfg.Metrics.SetIsLeader(value, e.getMetricsLabels())
+}
+
+// recordLeaderDuration records how long leadership was held
+func (e *kvElection) recordLeaderDuration() {
+	if e.cfg.Metrics == nil {
+		return
+	}
+	startTime := e.leaderStartTime.Load()
+	if startTime == nil {
+		return
+	}
+	if t, ok := startTime.(time.Time); ok && !t.IsZero() {
+		duration := time.Since(t)
+		e.cfg.Metrics.ObserveLeaderDuration(duration, e.getMetricsLabels())
+	}
 }
 
 func (e *kvElection) Start(ctx context.Context) error {
@@ -128,6 +198,11 @@ func (e *kvElection) Start(ctx context.Context) error {
 		// Register disconnect and reconnect handlers
 		e.connectionMonitor.OnDisconnect(e.disconnectHandler.handleDisconnect)
 		e.connectionMonitor.OnReconnect(e.handleReconnect)
+
+		// Set initial connection status metric
+		if e.cfg.Metrics != nil {
+			e.cfg.Metrics.SetConnectionStatus(1, e.getMetricsLabels())
+		}
 	}
 
 	e.state.Store(StateCandidate)
@@ -147,6 +222,9 @@ func (e *kvElection) Start(ctx context.Context) error {
 	go func() {
 		defer e.wg.Done()
 		if err := e.attemptAcquire(); err != nil {
+			// Record failed acquire attempt (when called directly from Start)
+			e.recordAcquireAttempt("failed")
+			e.recordFailure(classifyErrorType(err))
 			e.becomeFollower()
 		}
 	}()
@@ -183,6 +261,10 @@ func (e *kvElection) attemptAcquireWithRetry(ctx context.Context) {
 		if err == nil {
 			return
 		}
+
+		// Record failed acquire attempt (attemptAcquire already records success)
+		e.recordAcquireAttempt("failed")
+		e.recordFailure(classifyErrorType(err))
 
 		if retry == maxRetries {
 			log.Warn("acquire_failed_max_retries",
@@ -246,6 +328,8 @@ func (e *kvElection) attemptAcquire() error {
 				zap.String("error_type", classifyErrorType(err)),
 			)...,
 		)
+		e.recordAcquireAttempt("failed")
+		e.recordFailure(classifyErrorType(err))
 		return err
 	}
 
@@ -257,6 +341,7 @@ func (e *kvElection) attemptAcquire() error {
 		)...,
 	)
 
+	e.recordAcquireAttempt("success")
 	e.becomeLeader(token, rev)
 	return nil
 }
@@ -277,8 +362,14 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 	e.token.Store(token)
 	e.revision.Store(rev)
 	e.state.Store(StateLeader)
-	e.lastHeartbeat.Store(time.Now())
-	e.lastTransition.Store(time.Now())
+	now := time.Now()
+	e.lastHeartbeat.Store(now)
+	e.lastTransition.Store(now)
+	e.leaderStartTime.Store(now) // Track when leadership started
+
+	// Record metrics
+	e.recordTransition(fromState, StateLeader)
+	e.updateIsLeaderMetric()
 
 	// Log state transition
 	log := e.getLogger()
@@ -344,9 +435,20 @@ func (e *kvElection) becomeFollower() {
 		}
 	}
 
+	wasLeader := e.isLeader.Load()
 	e.isLeader.Store(false)
 	e.state.Store(StateFollower)
 	e.lastTransition.Store(time.Now())
+
+	// Record leader duration if we were a leader
+	if wasLeader {
+		e.recordLeaderDuration()
+		e.leaderStartTime.Store(time.Time{}) // Reset
+	}
+
+	// Record metrics
+	e.recordTransition(fromState, StateFollower)
+	e.updateIsLeaderMetric()
 
 	// Log state transition
 	log := e.getLogger()
@@ -378,14 +480,34 @@ func (e *kvElection) Stop() error {
 
 	wasLeader := e.isLeader.Load()
 
+	// Get current state for transition metric
+	currentState := StateInit
+	if s := e.state.Load(); s != nil {
+		if str, ok := s.(string); ok {
+			currentState = str
+		}
+	}
+
 	if e.cancel != nil {
 		e.cancel()
+	}
+
+	// Record leader duration if we were a leader
+	if wasLeader {
+		e.recordLeaderDuration()
+		e.leaderStartTime.Store(time.Time{}) // Reset
 	}
 
 	e.isLeader.Store(false)
 	e.state.Store(StateStopped)
 	e.lastTransition.Store(time.Now())
 	e.watcherRunning.Store(false)
+
+	// Record transition to STOPPED
+	e.recordTransition(currentState, StateStopped)
+
+	// Update metrics
+	e.updateIsLeaderMetric()
 
 	// Stop disconnect handler timer
 	if e.disconnectHandler != nil {
@@ -440,6 +562,20 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 
 	wasLeader := e.isLeader.Load()
 
+	// Get current state for transition metric
+	currentState := StateInit
+	if s := e.state.Load(); s != nil {
+		if str, ok := s.(string); ok {
+			currentState = str
+		}
+	}
+
+	// Record leader duration if we were a leader
+	if wasLeader {
+		e.recordLeaderDuration()
+		e.leaderStartTime.Store(time.Time{}) // Reset
+	}
+
 	// Cancel election context
 	if e.cancel != nil {
 		e.cancel()
@@ -449,6 +585,12 @@ func (e *kvElection) StopWithContext(ctx context.Context, opts StopOptions) erro
 	e.state.Store(StateStopped)
 	e.lastTransition.Store(time.Now())
 	e.watcherRunning.Store(false)
+
+	// Record transition to STOPPED
+	e.recordTransition(currentState, StateStopped)
+
+	// Update metrics
+	e.updateIsLeaderMetric()
 
 	// Stop disconnect handler timer
 	if e.disconnectHandler != nil {
@@ -786,6 +928,10 @@ func (e *kvElection) validateToken(ctx context.Context) (bool, error) {
 				zap.String("error_type", "token_mismatch"),
 			)...,
 		)
+		// Record token validation failure
+		if e.cfg.Metrics != nil {
+			e.cfg.Metrics.IncTokenValidationFailures(e.getMetricsLabels())
+		}
 		return false, err
 	}
 
@@ -827,6 +973,10 @@ func (e *kvElection) validateToken(ctx context.Context) (bool, error) {
 				zap.String("kv_leader_id", leaderID),
 			)...,
 		)
+		// Record token validation failure
+		if e.cfg.Metrics != nil {
+			e.cfg.Metrics.IncTokenValidationFailures(e.getMetricsLabels())
+		}
 		return false, err
 	}
 
