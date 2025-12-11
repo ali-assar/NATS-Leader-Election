@@ -378,18 +378,18 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 14: Create Integration Tests
 
-- [ ] **14.1** Set up integration test environment
+- [x] **14.1** Set up integration test environment
   - Create test helper to start NATS server
   - Create test helper to create KV buckets
   - **Learning**: Test infrastructure, test helpers
 
-- [ ] **14.2** Write integration tests
-  - Test full election with real NATSz
+- [x] **14.2** Write integration tests
+  - Test full election with real NATS
   - Test leader takeover scenarios
   - Test multiple candidates
   - **Learning**: Integration testing, real system testing
 
-- [ ] **14.3** Write chaos tests
+- [x] **14.3** Write chaos tests
   - Test network partition scenarios
   - Test process kill scenarios
   - Test NATS server restart
