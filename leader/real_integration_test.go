@@ -360,12 +360,8 @@ func TestRealNATS_MultipleCandidates(t *testing.T) {
 }
 
 // TestRealNATS_LeaderTakeover tests leader takeover when old leader stops.
-// Note: This test may be flaky with real NATS due to watcher timing.
 func TestRealNATS_LeaderTakeover(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping flaky integration test in short mode")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// Start embedded NATS server
