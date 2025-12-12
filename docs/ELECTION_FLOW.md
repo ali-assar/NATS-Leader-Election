@@ -82,21 +82,29 @@ becomeFollower()
               │
               ├─► ctx.Done() ──► Exit
               │
-              └─► entry from watcher.Updates()
+              ├─► entry from watcher.Updates()
+              │     │
+              │     ├─► entry == nil (key deleted)
+              │     │   └─► [New Goroutine] attemptAcquireWithRetry()
+              │     │         │
+              │     │         └─► (with jitter + backoff)
+              │     │
+              │     ├─► entry.Value() == empty
+              │     │   └─► [New Goroutine] attemptAcquireWithRetry()
+              │     │
+              │     └─► Valid entry
+              │           │
+              │           ├─► Update leaderID
+              │           │
+              │           └─► Update revision
+              │
+              └─► Periodic check (every 500ms)
                     │
-                    ├─► entry == nil
-                    │   └─► [New Goroutine] attemptAcquireWithRetry()
-                    │         │
-                    │         └─► (with jitter + backoff)
-                    │
-                    ├─► entry.Value() == empty
-                    │   └─► [New Goroutine] attemptAcquireWithRetry()
-                    │
-                    └─► Valid entry
+                    └─► checkKeyAndReelect()
                           │
-                          ├─► Update leaderID
+                          ├─► Key doesn't exist ──► attemptAcquireWithRetry()
                           │
-                          └─► Update revision
+                          └─► Leader changed ──► Update leaderID
 ```
 
 ## Concurrency Control
@@ -186,25 +194,35 @@ heartbeatLoop()
 ```
 watchLoop()
   │
-  └─► handleWatchEvent(entry)
+  ├─► handleWatchEvent(entry)
+  │     │
+  │     ├─► entry == nil ──► attemptAcquireWithRetry()
+  │     │                      │
+  │     │                      ├─► Jitter (10-100ms)
+  │     │                      │
+  │     │                      └─► Retry loop (max 3 retries)
+  │     │                            │
+  │     │                            ├─► attemptAcquire() succeeds
+  │     │                            │   └─► becomeLeader()
+  │     │                            │
+  │     │                            └─► All retries fail
+  │     │                                  └─► becomeFollower()
+  │     │
+  │     └─► Valid entry
+  │           │
+  │           ├─► Update leaderID
+  │           │
+  │           └─► Update revision
+  │
+  └─► Periodic check (every 500ms)
         │
-        ├─► entry == nil ──► attemptAcquireWithRetry()
-        │                      │
-        │                      ├─► Jitter (10-100ms)
-        │                      │
-        │                      └─► Retry loop (max 3 retries)
-        │                            │
-        │                            ├─► attemptAcquire() succeeds
-        │                            │   └─► becomeLeader()
-        │                            │
-        │                            └─► All retries fail
-        │                                  └─► becomeFollower()
-        │
-        └─► Valid entry
+        └─► checkKeyAndReelect()
               │
-              ├─► Update leaderID
+              ├─► Key doesn't exist ──► attemptAcquireWithRetry()
               │
-              └─► Update revision
+              ├─► Key empty ──► attemptAcquireWithRetry()
+              │
+              └─► Leader changed ──► Update leaderID and revision
 ```
 
 ## Channel Communication

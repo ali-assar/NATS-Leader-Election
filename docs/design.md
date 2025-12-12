@@ -133,8 +133,10 @@ Implementation note: If the JS client doesn't provide a strict `Update` with exp
 
 Sequence:
 
-* Followers receive watch event indicating key deleted or absent
-* Each follower waits a small random jitter, then attempts `Create`
+* Followers watch key events via `kv.Watch(groupKey)`
+* **Periodic check**: Every 500ms, followers check if key exists (fallback for missed watch events)
+* On watch event (delete/nil) or periodic check detecting missing key, followers trigger re-election
+* Each follower waits a small random jitter (10-100ms), then attempts `Create`
 * One wins and becomes leader; others become followers again
 
 Mermaid:
@@ -167,8 +169,18 @@ sequenceDiagram
 
 Backoff & jitter:
 
-* Randomized jitter before attempting to create (e.g., uniform 10–200ms) reduces thundering herd
-* If create fails, exponential backoff with jitter before retrying
+* Randomized jitter before attempting to create (10-100ms uniform) reduces thundering herd
+* If create fails, exponential backoff with jitter before retrying (max 3 retries)
+* Initial jitter: 10-100ms random delay before first attempt
+* Retry backoff: exponential with 10% jitter (50ms base, max 5s)
+
+**Periodic Check Mechanism:**
+
+* Followers run a periodic check every 500ms to detect key deletion
+* This acts as a fallback if NATS watcher events are delayed or missed
+* Periodic check calls `kv.Get(key)` to explicitly check key existence
+* If key is missing or empty, triggers re-election attempt
+* This ensures reliable detection even if watcher channel is slow or blocked
 
 ---
 
@@ -198,33 +210,38 @@ sequenceDiagram
     end
 ```
 
-**Enhanced Fencing Strategy:**
+**Fencing Strategy (Implemented):**
 
 1. **Periodic Background Validation:**
-   - If `ValidationInterval > 0`, validate token every N seconds
-   - Update cached token on successful validation
+   - If `ValidationInterval > 0`, validate token every N seconds in background
+   - Validation runs in a separate goroutine
    - If validation fails, demote immediately
 
 2. **Operation-Level Validation:**
-   - If `ValidateOnCriticalOps = true`, always validate before critical operations
-   - Critical operations should call `ValidateToken()` before proceeding
-   - Non-critical operations can use cached token
+   - Use `ValidateToken(ctx)` to check token validity before critical operations
+   - Use `ValidateTokenOrDemote(ctx)` to validate and automatically demote if invalid
+   - Returns `false` if token is invalid or instance is not leader
 
-3. **Token Caching:**
-   - Cache token locally with timestamp
-   - Refresh cache on successful heartbeat or validation
-   - Use cached token for non-critical operations to reduce KV read load
+3. **Token Storage:**
+   - Token is stored in KV value payload
+   - Token is cached locally and updated on successful heartbeat
+   - Token is validated periodically if `ValidationInterval > 0`
 
 4. **Validation Flow:**
    ```
-   if ValidateOnCriticalOps or (timeSinceLastValidation > ValidationInterval):
-       tokenFromKV = kv.Get(key).token
-       if tokenFromKV != cachedToken:
-           demote()
-           return false
-       cachedToken = tokenFromKV
-       lastValidation = now()
-   return true
+   ValidateToken(ctx):
+       if not IsLeader():
+           return false, nil
+       entry = kv.Get(key)
+       if entry == nil or entry.token != cachedToken:
+           return false, nil
+       return true, nil
+   
+   ValidateTokenOrDemote(ctx):
+       valid, err := ValidateToken(ctx)
+       if !valid:
+           becomeFollower()
+       return valid
    ```
 
 ---
@@ -313,10 +330,13 @@ Transitions details:
 
 ### Connection health monitoring
 
-* Track NATS connection status continuously
-* If disconnected, stop heartbeating and demote after grace period
-* On reconnection, verify leadership status before resuming leader tasks
-* Implement connection health check: periodic ping to verify connectivity
+* ✅ Track NATS connection status continuously via connection status callbacks
+* ✅ If disconnected, stop heartbeating and start grace period timer
+* ✅ If grace period exceeded, demote immediately
+* ✅ On reconnection, verify leadership status by reading KV and comparing token
+* ✅ Only resume leader tasks if verification succeeds
+* ✅ Connection status is tracked via `ConnectionMonitor` interface
+* ✅ Connection status metrics are recorded (`election_connection_status`)
 
 ---
 
@@ -397,24 +417,46 @@ Operational checks:
 
 Testing matrix (suggested):
 
-| Test                   | What to simulate              | Expected behavior                                      |
-| ---------------------- | ----------------------------- | ------------------------------------------------------ |
-| Single leader takeover | Start 3 candidates            | One becomes leader; others follow                      |
-| Leader crash           | Kill leader process           | A follower becomes leader quickly                      |
-| Network partition      | Block network for leader      | Leader demotes; followers elect new leader             |
-| Slow update            | Delay KV update response      | Leader detects failure and demotes if update conflicts |
-| Thundering herd        | Expire key with 100 followers | System remains stable; one wins quickly                |
-| Connection loss        | Disconnect NATS connection    | Leader demotes after DisconnectGracePeriod             |
-| Bucket deletion        | Delete KV bucket              | All operations fail fast, no infinite retries          |
-| Token validation       | Manually change token in KV   | Leader detects mismatch and demotes                    |
-| Graceful shutdown      | Call Stop() on leader         | Key deleted (if enabled), OnDemote called, clean exit  |
-| Health check failure   | HealthChecker returns false   | Leader voluntarily demotes                             |
-| Priority takeover      | Higher priority candidate     | Only if AllowPriorityTakeover enabled and safe         |
-| Clock skew             | Simulate clock differences    | System works correctly (doesn't rely on clocks)        |
-| GC pressure            | Force GC during heartbeat     | Heartbeat may be delayed but should recover            |
-| NATS server restart    | Restart NATS cluster          | Clients reconnect, leadership maintained or re-elected |
+| Test                   | What to simulate              | Expected behavior                                      | Status |
+| ---------------------- | ----------------------------- | ------------------------------------------------------ | ------ |
+| Single leader takeover | Start 3 candidates            | One becomes leader; others follow                      | ✅ Tested |
+| Leader crash           | Kill leader process           | A follower becomes leader quickly                      | ✅ Tested |
+| Network partition      | Block network for leader      | Leader demotes; followers elect new leader             | ✅ Tested |
+| Slow update            | Delay KV update response      | Leader detects failure and demotes if update conflicts | ✅ Tested |
+| Thundering herd        | Expire key with 10+ followers | System remains stable; one wins quickly                | ✅ Tested |
+| Connection loss        | Disconnect NATS connection    | Leader demotes after DisconnectGracePeriod             | ✅ Tested |
+| Bucket deletion        | Delete KV bucket              | All operations fail fast, no infinite retries          | ✅ Tested |
+| Token validation       | Manually change token in KV   | Leader detects mismatch and demotes                    | ✅ Tested |
+| Graceful shutdown      | Call StopWithContext()        | Key deleted (if enabled), OnDemote called, clean exit  | ✅ Tested |
+| Health check failure   | HealthChecker returns false   | Leader voluntarily demotes                             | ✅ Tested |
+| NATS server restart    | Restart NATS cluster          | Clients reconnect, leadership maintained or re-elected | ✅ Tested |
+| Periodic key check     | Missed watcher events         | Periodic check (500ms) detects key deletion            | ✅ Implemented |
+| Clock skew             | Simulate clock differences    | System works correctly (doesn't rely on clocks)        | ✅ Verified |
+| GC pressure            | Force GC during heartbeat     | Heartbeat may be delayed but should recover            | ✅ Tested |
 
-## 11. Connection management & lifecycle
+## 11. Observability & Metrics
+
+**Implemented Metrics:**
+
+All metrics are optional - if `Metrics` is `nil` in config, metrics recording is disabled.
+
+* ✅ `election_is_leader` (gauge) - 1 if leader, 0 otherwise
+* ✅ `election_transitions_total` (counter) - State transitions with from/to states
+* ✅ `election_failures_total` (counter) - Election failures by error type
+* ✅ `election_acquire_attempts_total` (counter) - Acquisition attempts (success/failed)
+* ✅ `election_token_validation_failures_total` (counter) - Token validation failures
+* ✅ `election_heartbeat_duration_seconds` (histogram) - Heartbeat operation duration
+* ✅ `election_leader_duration_seconds` (histogram) - How long instances hold leadership
+* ✅ `election_connection_status` (gauge) - Connection status (1=connected, 0=disconnected)
+
+**Structured Logging:**
+
+* ✅ All state transitions are logged with structured logging (Zap)
+* ✅ Logs include correlation context for tracing
+* ✅ Configurable log levels (DEBUG, INFO, WARN, ERROR)
+* ✅ Logs include relevant context (instance ID, token, revision, etc.)
+
+## 12. Connection management & lifecycle
 
 **Connection Health Monitoring:**
 
@@ -522,7 +564,7 @@ func retryWithBackoff(ctx context.Context, cfg RetryConfig, fn func() error) err
 }
 ```
 
-## 13. Configuration validation
+## 14. Configuration validation
 
 **Validation Rules:**
 
@@ -571,9 +613,9 @@ func validateConfig(cfg ElectionConfig) error {
 
 ---
 
-## 14. Appendix — Example mermaid diagrams
+## 15. Appendix — Example mermaid diagrams
 
-### 11.1 Initial attempt and promotion
+### 15.1 Initial attempt and promotion
 
 ```mermaid
 sequenceDiagram
@@ -590,7 +632,7 @@ sequenceDiagram
     end
 ```
 
-### 11.2 Heartbeat with conflict detection
+### 15.2 Heartbeat with conflict detection
 
 ```mermaid
 sequenceDiagram
@@ -608,7 +650,7 @@ sequenceDiagram
     end
 ```
 
-### 11.3 Demotion and read-before-act fencing
+### 15.3 Demotion and read-before-act fencing
 
 ```mermaid
 sequenceDiagram

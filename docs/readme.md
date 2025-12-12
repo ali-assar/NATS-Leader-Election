@@ -4,16 +4,40 @@ Lightweight, portable, application-level leader election library built on **NATS
 
 ---
 
+## 🎯 Quick Status
+
+**✅ Production Ready:** Core leader election functionality is fully implemented and tested.
+
+**✅ Implemented:**
+- Core election logic, heartbeats, watchers
+- Fencing tokens with validation
+- Connection health monitoring
+- Health checker integration
+- Graceful shutdown
+- Full observability (metrics + logging)
+- Comprehensive test suite
+
+**📋 TODO:**
+- RoleManager for multi-role management
+- Priority-based takeover
+- CLI tooling
+- Example applications
+- gRPC task distribution
+
+**See "Feature Status" section below for complete details.**
+
+---
+
 ## Goal
 
 Provide a minimal, reliable, and production-ready Go library that:
 
-* Elects leaders using NATS KV (no custom RAFT implementation required)
-* Supports *application-level* leadership (not restricted to K8s Pods)
-* Enables multi-role election (multiple, independent leadership groups)
-* Exposes simple callbacks to run leader-specific logic and respond to demotions
-* Provides robustness primitives (fencing tokens, TTL heartbeats, health-based demotion)
-* Is easy to test, observe, and operate
+* Elects leaders using NATS KV (no custom RAFT implementation required) ✅
+* Supports *application-level* leadership (not restricted to K8s Pods) ✅
+* Enables multi-role election (multiple, independent leadership groups) ✅ *Note: Create multiple Election instances for different roles. RoleManager helper is TODO.*
+* Exposes simple callbacks to run leader-specific logic and respond to demotions ✅
+* Provides robustness primitives (fencing tokens, TTL heartbeats, health-based demotion) ✅
+* Is easy to test, observe, and operate ✅
 
 ---
 
@@ -82,6 +106,14 @@ type Election interface {
 
     // OnDemote registers a callback executed when this instance loses leadership.
     OnDemote(func())
+
+    // ValidateToken validates the current token against the KV store.
+    // Returns true if token is valid, false if invalid or not leader.
+    ValidateToken(ctx context.Context) (bool, error)
+
+    // ValidateTokenOrDemote validates the token and demotes if invalid.
+    // Returns true if token is valid, false if invalid (and demoted).
+    ValidateTokenOrDemote(ctx context.Context) bool
 }
 
 type ElectionConfig struct {
@@ -93,56 +125,24 @@ type ElectionConfig struct {
     HeartbeatInterval time.Duration // How often to refresh leadership
 
     // Optional fields
-    Priority          int           // Priority for takeover (higher = preferred)
     Logger            Logger        // Structured logger (defaults to no-op)
     
-    // Connection management
-    ConnectionTimeout      time.Duration // Timeout for KV operations
-    DisconnectGracePeriod  time.Duration // How long to wait before demoting on disconnect
-    
     // Fencing configuration
-    Fencing FencingConfig // Token validation strategy
+    ValidationInterval time.Duration // How often to validate token in background (0 = disabled)
     
-    // Health checking
-    HealthChecker HealthChecker // Optional health check callback
+    // Connection management
+    DisconnectGracePeriod  time.Duration // How long to wait before demoting on disconnect (0 = default: max(3*HeartbeatInterval, 5s))
     
-    // Retry and backoff
-    RetryConfig RetryConfig // Retry strategy for transient failures
+    // Observability (OPTIONAL)
+    Metrics Metrics // Optional: nil = disabled, non-nil = enabled
     
-    // Bucket management
-    BucketAutoCreate bool // Create bucket if it doesn't exist
-    
-    // Graceful shutdown
-    DeleteOnStop bool // Delete key on Stop() for fast failover
+    // Health checking (OPTIONAL)
+    HealthChecker          HealthChecker // Optional: nil = disabled, non-nil = enabled
+    MaxConsecutiveFailures int           // Max consecutive failures before demotion (default: 3, only used if HealthChecker is set)
 }
 
-type FencingConfig struct {
-    // ValidationInterval: how often to validate token in background (0 = disabled)
-    ValidationInterval time.Duration
-    
-    // ValidateOnCriticalOps: always validate token before critical operations
-    ValidateOnCriticalOps bool
-    
-    // CacheToken: cache token locally and validate periodically (default: true)
-    CacheToken bool
-}
-
-type RetryConfig struct {
-    // MaxAttempts: maximum retry attempts (0 = unlimited)
-    MaxAttempts int
-    
-    // InitialBackoff: initial backoff duration
-    InitialBackoff time.Duration
-    
-    // MaxBackoff: maximum backoff duration
-    MaxBackoff time.Duration
-    
-    // BackoffMultiplier: exponential backoff multiplier
-    BackoffMultiplier float64
-    
-    // Jitter: random jitter range (0-1, e.g., 0.1 = ±10%)
-    Jitter float64
-}
+// Note: Fencing tokens are automatically validated periodically if ValidationInterval > 0.
+// Use ValidateToken() or ValidateTokenOrDemote() methods for operation-level validation.
 
 type StopOptions struct {
     // DeleteKey: delete the leadership key on stop (enables fast failover)
@@ -171,7 +171,12 @@ type HealthChecker interface {
     Check(ctx context.Context) bool
 }
 
-func NewElection(nc *nats.Conn, cfg ElectionConfig) (Election, error)
+// NewElection creates a new election instance with a JetStreamProvider.
+func NewElection(nc JetStreamProvider, cfg ElectionConfig) (Election, error)
+
+// NewElectionWithConn creates a new election instance with a NATS connection.
+// This is a convenience function that wraps the connection.
+func NewElectionWithConn(nc *nats.Conn, cfg ElectionConfig) (Election, error)
 ```
 
 **Configuration Validation**: The library validates that `TTL >= HeartbeatInterval * 3` (minimum safety margin), `InstanceID` is non-empty, and required fields are set. Invalid configurations return an error.
@@ -199,7 +204,9 @@ func NewElection(nc *nats.Conn, cfg ElectionConfig) (Election, error)
 ### 3) Follower watch + contest
 
 * Followers watch key events (`kv.Watch(groupKey)`)
-* On `Delete` or missing key (TTL expire) followers race to `Create` again
+* **Periodic check**: Every 500ms, followers check if key exists (fallback for missed watch events)
+* On `Delete` or missing key (TTL expire) or periodic check detecting deletion, followers race to `Create` again
+* Each follower waits random jitter (10-100ms) before attempting to acquire
 * One of them wins the next election
 
 ### 4) Demotion & fencing
@@ -209,143 +216,229 @@ func NewElection(nc *nats.Conn, cfg ElectionConfig) (Election, error)
 
 ---
 
-## Important improvements & why they matter
+## Feature Status
 
-Below, each improvement is explained with *what*, *why*, and *how to implement*.
+### ✅ Implemented Features
 
-### 1) Fencing tokens (critical)
+#### Core Functionality
+- ✅ **Leader Election**: Atomic `Create()` for leadership acquisition
+- ✅ **Heartbeat Mechanism**: Periodic `Update()` with revision checking to maintain leadership
+- ✅ **Follower Watching**: Watch key events and periodic checks (500ms) for reliable detection
+- ✅ **State Management**: Full state machine (INIT → CANDIDATE → LEADER/FOLLOWER → DEMOTED → STOPPED)
+- ✅ **Callbacks**: `OnPromote()` and `OnDemote()` callbacks with context support
 
-**What:** a unique token (UUID) stored with the leader key.
+#### Robustness Features
+- ✅ **Fencing Tokens**: UUID-based tokens stored in KV, validated periodically and on-demand
+  - ✅ Periodic background validation (configurable `ValidationInterval`)
+  - ✅ Operation-level validation via `ValidateToken()` and `ValidateTokenOrDemote()`
+  - ✅ Token caching with periodic refresh
+- ✅ **Health-Aware Demotion**: Optional `HealthChecker` interface
+  - ✅ Health checked before each heartbeat
+  - ✅ Automatic demotion after N consecutive failures (configurable)
+- ✅ **Connection Health Monitoring**: NATS connection status tracking
+  - ✅ Disconnect detection with grace period
+  - ✅ Automatic demotion after grace period expires
+  - ✅ Reconnection verification before resuming leadership
+- ✅ **Retry & Backoff**: Exponential backoff with jitter
+  - ✅ Initial jitter (10-100ms) to prevent thundering herd
+  - ✅ Exponential backoff with 10% jitter (50ms base, max 5s)
+  - ✅ Max 3 retries for acquisition attempts
+  - ✅ Circuit breaker pattern for consecutive failures
+- ✅ **Error Classification**: Transient vs permanent error handling
+  - ✅ Automatic retry for transient errors
+  - ✅ Fail-fast for permanent errors
 
-**Why:** prevents a previously-leader instance from continuing to act after it loses leadership (due to network partition or delayed demotion). If leader tasks touch shared resources, they should check token validity before important operations.
+#### Observability
+- ✅ **Structured Logging**: Zap-based logging with correlation IDs
+  - ✅ All state transitions logged
+  - ✅ Error logging with context
+  - ✅ Configurable log levels
+- ✅ **Prometheus Metrics**: Full metrics integration
+  - ✅ `election_is_leader` (gauge)
+  - ✅ `election_transitions_total` (counter)
+  - ✅ `election_failures_total` (counter)
+  - ✅ `election_heartbeat_duration_seconds` (histogram)
+  - ✅ `election_leader_duration_seconds` (histogram)
+  - ✅ `election_acquire_attempts_total` (counter)
+  - ✅ `election_token_validation_failures_total` (counter)
+  - ✅ `election_connection_status` (gauge)
 
-**How:** store token in KV value. When performing sensitive operations, verify the token by reading KV and comparing. Optionally, use atomic conditional updates that require the token/revision to match.
+#### Graceful Shutdown
+- ✅ **StopWithContext()**: Graceful shutdown with options
+  - ✅ Optional key deletion for fast failover
+  - ✅ Wait for `OnDemote` callback completion
+  - ✅ Timeout handling
+  - ✅ Context propagation to callbacks
 
-**Enhanced Strategy:**
-- **Periodic validation**: Background validation every N seconds (configurable) to catch stale leadership faster
-- **Operation-level validation**: Critical operations validate immediately; non-critical can use cached token
-- **Token caching**: Cache token locally with periodic refresh to reduce KV read load while maintaining safety
+#### Testing
+- ✅ **Unit Tests**: Comprehensive unit tests with mocks
+- ✅ **Integration Tests**: Real NATS server integration tests
+- ✅ **Chaos Tests**: Network partition, process kill, NATS restart, thundering herd
+- ✅ **Test Infrastructure**: Embedded NATS server helpers
 
-### 2) Health-aware demotion
+### 📋 TODO / Not Yet Implemented
 
-**What:** automatic self-demotion if local health checks fail.
+#### Multi-Role Support
+- 📋 **RoleManager**: Convenience helper to manage multiple elections
+  - TODO: Create `RoleManager` interface and implementation
+  - TODO: Aggregate status across multiple roles
+  - TODO: Role-specific callbacks
 
-**Why:** if the leader is unhealthy (e.g., can't access DB or is overloaded), it should abdicate so a healthier instance can take control.
+#### Advanced Features
+- 📋 **Priority-Based Takeover**: Optional priority system for leader selection
+  - TODO: Add `Priority` field to `ElectionConfig`
+  - TODO: Store priority in KV payload
+  - TODO: Implement safe priority-based takeover logic
+  - TODO: Add `AllowPriorityTakeover` config flag
+  - ⚠️ **Note**: Use with caution - prefer voluntary demotion over forced preemption
 
-**How:** integrate a `HealthChecker` callback that returns `healthy bool`. If it returns false for N consecutive checks, call `kv.Delete(key)` or stop heartbeating and voluntarily demote.
+#### Task Distribution
+- 📋 **gRPC Control Plane**: Task distribution from leader to followers
+  - TODO: Create `control` package for task distribution
+  - TODO: Leader authentication using fencing tokens
+  - TODO: Task subscription mechanism for followers
 
-### 3) Multi-role & multi-group support
+#### Tooling & Examples
+- 📋 **CLI Tool**: Debugging and management tool
+  - TODO: List current leaders
+  - TODO: Force demote leaders
+  - TODO: Inspect tokens and election state
+- 📋 **Example Applications**: 
+  - TODO: Update `cmd/demo/main.go` with complete example
+  - TODO: Create `examples/control-manager/` example
+  - TODO: Create `examples/multi-role/` example
+  - TODO: Kubernetes operator example
 
-**What:** allow multiple independent election keys (e.g., `roles/scheduler`, `roles/network`) so different instances can hold different roles simultaneously.
+#### Advanced Observability
+- 📋 **Advanced Metrics**: Additional metrics and exporters
+  - TODO: Official Prometheus exporter package
+  - TODO: Additional performance metrics
+  - TODO: Distributed tracing integration
 
-**Why:** many control-plane systems need different exclusive actors for different responsibilities.
+#### Multi-Datacenter
+- 📋 **Multi-Datacenter Support**: Cross-cluster leader election
+  - TODO: Support for multiple NATS clusters
+  - TODO: Datacenter-aware leader selection
+  - TODO: Integration with service discovery (Consul/etcd)
 
-**How:** provide convenience helpers to create multiple `Election` objects or a `RoleManager` that manages a map of roles → elections.
+#### Security Enhancements
+- 📋 **Token Signing**: Cryptographically signed tokens
+  - TODO: Implement token signing/verification
+  - TODO: Add signing key management
+- 📋 **Token Rotation**: Periodic token rotation for long-lived leaders
+  - TODO: Implement token rotation mechanism
+  - TODO: Configurable rotation interval
 
-### 4) Priority-based takeover (optional, use with caution)
+#### Performance Optimizations
+- 📋 **Connection Pooling**: Optimize for multiple elections
+  - TODO: Connection pool management
+  - TODO: Shared connection optimization
+- 📋 **Batch Operations**: Batch KV operations where possible
+  - TODO: Batch heartbeat updates
+  - TODO: Batch status checks
 
-**What:** candidates can have a `priority` value; higher priority can pre-empt an existing lower-priority leader when certain safe conditions are met.
-
-**Why:** useful when you want to prefer specific nodes (more powerful machines) to be leaders.
-
-**How:** store `priority` in the KV value. On watcher events, if a candidate sees a lower priority leader AND the leader's token/revision shows inactivity or a manual override flag, implement a controlled takeover.
-
-**Safety Recommendations:**
-- **Prefer voluntary demotion**: Higher priority should wait for current leader to become unhealthy rather than forcing preemption
-- **Require explicit flag**: Add `AllowPriorityTakeover bool` to config to opt-in
-- **Grace period**: Higher priority waits for current leader to be unhealthy (missed heartbeats) before takeover
-- **Document risks**: Clearly document split-brain risks and recommend manual demotion over automatic takeover
-
-### 5) Observability & metrics
-
-**What:** Comprehensive Prometheus metrics for monitoring election health and performance.
-
-**Why:** operators need to know who's leader, how often elections occur, and whether something is wrong.
-
-**Metrics Provided:**
-- `election_is_leader` (gauge) — 1 if current instance is leader, 0 otherwise. Labels: `role`, `instance_id`, `bucket`
-- `election_transitions_total` (counter) — Total number of state transitions. Labels: `role`, `instance_id`, `bucket`, `from_state`, `to_state`
-- `election_failures_total` (counter) — Total number of election failures. Labels: `role`, `instance_id`, `bucket`, `error_type`
-- `election_heartbeat_duration_seconds` (histogram) — Time taken for heartbeat operations. Labels: `role`, `instance_id`, `bucket`, `status`
-- `election_leader_duration_seconds` (histogram) — How long instances hold leadership. Labels: `role`, `instance_id`, `bucket`
-- `election_acquire_attempts_total` (counter) — Total election acquisition attempts. Labels: `role`, `instance_id`, `bucket`, `status`
-- `election_token_validation_failures_total` (counter) — Token validation failures (indicates stale leaders). Labels: `role`, `instance_id`, `bucket`
-- `election_connection_status` (gauge) — NATS connection status (1=connected, 0=disconnected). Labels: `role`, `instance_id`, `bucket`
-
-**Structured Logging:**
-- Use structured logging (e.g., `log/slog` or `zerolog`) with correlation IDs for tracing
-- Log all state transitions with context
-- Configurable log levels (DEBUG, INFO, WARN, ERROR)
-
-### 6) Graceful shutdown & readiness
-
-**What:** on SIGTERM, leader should optionally release leadership or mark itself as not ready and stop heartbeating to allow quick failover.
-
-**Why:** reduce downtime during rolling upgrades.
-
-**How:** provide `StopWithContext(ctx, opts)` that:
-- Optionally deletes the KV key immediately (faster than waiting for TTL)
-- Waits for `OnDemote` callback to complete (configurable timeout)
-- Ensures all background goroutines are cleaned up
-- Returns error if shutdown doesn't complete within timeout
-
-**Example:**
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-defer cancel()
-
-err := e.StopWithContext(ctx, leader.StopOptions{
-    DeleteKey:      true,  // Delete key for fast failover
-    WaitForDemote:  true,  // Wait for OnDemote to finish
-    Timeout:        10 * time.Second,
-})
-```
-
-### 7) gRPC task distribution (optional advanced)
-
-**What:** let leader become an instruction source via a small gRPC control plane — followers subscribe and receive tasks.
-
-**Why:** for complex orchestration, letting leader push assignments is easier than polling.
-
-**How:** the library can provide a small `control` package to publish task messages to a subject or via gRPC with leader authentication using token.
+#### Additional Features
+- 📋 **Observer Mode**: Watch elections without participating
+  - TODO: Read-only election observer interface
+  - TODO: Observer callbacks for leader changes
+- 📋 **Bucket Auto-Create**: Automatic bucket creation
+  - TODO: Implement `BucketAutoCreate` option
+  - TODO: Bucket configuration management
 
 ---
 
 ## Usage example
 
 ```go
-nc, _ := nats.Connect(nats.DefaultURL)
-js, _ := nc.JetStream()
-kv, _ := js.CreateKeyValue(&nats.KeyValueConfig{Bucket: "leaders"})
+import (
+    "context"
+    "log"
+    "time"
+    
+    "github.com/nats-io/nats.go"
+    "github.com/ali-assar/NATS-Leader-Election/leader"
+)
 
-cfg := leader.ElectionConfig{
-    Bucket: "leaders",
-    Group:  "control-manager",
-    InstanceID: myID,
-    TTL: 5 * time.Second,
-    HeartbeatInterval: 1 * time.Second,
+// Connect to NATS
+nc, err := nats.Connect(nats.DefaultURL)
+if err != nil {
+    log.Fatal(err)
+}
+defer nc.Close()
+
+// Create JetStream context and KV bucket
+js, err := nc.JetStream()
+if err != nil {
+    log.Fatal(err)
 }
 
-e, err := leader.NewElection(nc, cfg)
-if err != nil { log.Fatal(err) }
+kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
+    Bucket: "leaders",
+    TTL:    10 * time.Second,
+})
+if err != nil {
+    log.Fatal(err)
+}
 
-// register hooks
+// Configure election
+cfg := leader.ElectionConfig{
+    Bucket:            "leaders",
+    Group:             "control-manager",
+    InstanceID:        "instance-1", // Should be unique per instance
+    TTL:               10 * time.Second,
+    HeartbeatInterval: 1 * time.Second,
+    ValidationInterval: 5 * time.Second, // Validate token every 5s
+    // Logger: myLogger,              // Optional: structured logger
+    // Metrics: myMetrics,            // Optional: Prometheus metrics
+    // HealthChecker: myHealthChecker, // Optional: health checker
+}
+
+e, err := leader.NewElectionWithConn(nc, cfg)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Register callbacks
 e.OnPromote(func(ctx context.Context, token string) {
-    log.Println("promoted — starting leader tasks")
+    log.Println("Promoted — starting leader tasks", "token", token)
     go startLeaderTasks(ctx, token)
 })
 
 e.OnDemote(func() {
-    log.Println("demoted — stopping leader tasks")
+    log.Println("Demoted — stopping leader tasks")
     stopLeaderTasks()
 })
 
+// Start election
 ctx := context.Background()
-if err := e.Start(ctx); err != nil { log.Fatal(err) }
+if err := e.Start(ctx); err != nil {
+    log.Fatal(err)
+}
+defer e.Stop()
 
-// run until shutdown
+// In leader tasks, validate token before critical operations
+func performCriticalOperation(e leader.Election) {
+    if !e.ValidateTokenOrDemote(context.Background()) {
+        log.Println("Token invalid, operation aborted")
+        return
+    }
+    // Perform critical operation...
+}
+
+// Run until shutdown
 <-ctx.Done()
-_ = e.Stop()
+
+// Graceful shutdown
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+
+err = e.StopWithContext(shutdownCtx, leader.StopOptions{
+    DeleteKey:      true,  // Delete key for fast failover
+    WaitForDemote:  true,  // Wait for OnDemote to complete
+})
+if err != nil {
+    log.Printf("Error during shutdown: %v", err)
+}
 ```
 
 ---
@@ -355,7 +448,7 @@ _ = e.Stop()
 * **Clock skew**: Don't rely on system clocks for ordering; use KV revision and tokens.
 * **Network partitions**: Because NATS KV is RAFT-based, it tolerates partitions; but be cautious — if your client loses connectivity but remains running, ensure it demotes on lost heartbeats. The library monitors connection status and demotes if disconnected beyond `DisconnectGracePeriod`.
 * **Split-brain**: Using `Create` + `Update` with expected revisions and fencing tokens greatly reduces this risk. Do not implement a takeover by `Put` without revision checks.
-* **Thundering herd**: When a leader key expires, many followers may attempt `Create` at once. Use jittered backoff when retrying to reduce load. The library implements randomized jitter (50-200ms) and exponential backoff.
+* **Thundering herd**: When a leader key expires, many followers may attempt `Create` at once. The library implements randomized jitter (10-100ms initial, exponential backoff with 10% jitter for retries) to reduce load.
 * **Unreliable KV TTL semantics**: Test TTL and heartbeat timing under load. Make heartbeat interval significantly smaller than TTL (minimum 3x ratio enforced) and consider performing a `kv.Update` before TTL/2.
 * **NATS KV bucket deletion**: If the bucket is deleted while election is running, the library will detect this and return errors. Consider enabling `BucketAutoCreate` for development, but prefer explicit bucket management in production.
 * **Error classification**: The library distinguishes between transient errors (network issues, temporary unavailability) and permanent errors (invalid config, permission denied). Transient errors trigger retries; permanent errors fail fast.
@@ -366,24 +459,36 @@ _ = e.Stop()
 ## Testing
 
 **Unit Tests:**
-- Mock `nats.Conn` and `nats.KeyValue` interfaces
-- Provide test helpers that simulate KV state transitions (Create success/fail, Update success/fail, Watch events)
-- Test error classification (transient vs. permanent)
-- Test configuration validation
-- Test retry and backoff logic
+- ✅ Mock `nats.Conn` and `nats.KeyValue` interfaces (`internal/natsmock`)
+- ✅ Test helpers that simulate KV state transitions (Create success/fail, Update success/fail, Watch events)
+- ✅ Test error classification (transient vs. permanent)
+- ✅ Test configuration validation
+- ✅ Test retry and backoff logic
+- ✅ Test metrics recording
+- ✅ Test fencing token validation
+- ✅ Test connection health monitoring
+- ✅ Test graceful shutdown
 
 **Integration Tests:**
-- Run a local nats-server (JetStream enabled) with a KV bucket
-- Exercise leader takeover, demotion, and fencing
-- Test with multiple candidates competing simultaneously
-- Test connection loss and recovery scenarios
+- ✅ Run embedded NATS server (JetStream enabled) with KV buckets
+- ✅ Exercise leader takeover, demotion, and fencing
+- ✅ Test with multiple candidates competing simultaneously
+- ✅ Test connection loss and recovery scenarios
+- ✅ Test full election lifecycle with real NATS
+- ✅ Test token validation scenarios
+- ✅ Test heartbeat maintenance
 
 **Chaos Tests:**
-- Simulate network drops and verify safe failover
-- Simulate process stalls (GC pressure, CPU starvation)
-- Simulate NATS server restarts
-- Simulate clock skew (if possible)
-- Test thundering herd scenarios (100+ followers competing)
+- ✅ Simulate network partitions and verify safe failover
+- ✅ Simulate process kills (with and without key deletion)
+- ✅ Simulate NATS server restarts
+- ✅ Test thundering herd scenarios (10+ followers competing)
+- ✅ Test graceful shutdown scenarios
+
+**Test Infrastructure:**
+- ✅ Embedded NATS server helper (`embeded_nats_server.go`)
+- ✅ KV bucket creation/cleanup helpers
+- ✅ Test utilities (`waitForLeader`, `waitForCondition`, `waitForHeartbeat`)
 
 **Property-Based Tests:**
 - Use libraries like `gopter` to test state transitions
@@ -409,18 +514,21 @@ _ = e.Stop()
 
 ---
 
-## Roadmap / Future work
+## Implementation Status Summary
 
-* CLI tool for debugging elections (list leaders, force-demote, inspect tokens)
-* Official Prometheus exporter with advanced metrics
-* `RoleManager` that manages many roles with single client connection
-* gRPC control-plane scaffolding for task assignment
-* Example operators for Kubernetes to show how to integrate with Pods when running inside cluster
-* Optional integration with service discovery (consul / etcd) for multi-datacenter awareness
-* **Observer mode**: Allow instances to watch elections without participating
-* **Multi-datacenter support**: Leader election across multiple NATS clusters
-* **Token signing**: Cryptographically signed tokens for stronger guarantees
-* **Performance optimizations**: Connection pooling, batch operations
+**Core Features: ✅ Complete**
+- All essential leader election functionality is implemented and tested
+- Production-ready with comprehensive error handling and observability
+- Full test coverage (unit, integration, chaos tests)
+
+**Advanced Features: 📋 TODO**
+- Multi-role management (RoleManager)
+- Priority-based takeover
+- gRPC task distribution
+- CLI tooling
+- Example applications
+
+**See "Feature Status" section above for detailed breakdown.**
 
 ---
 
@@ -472,7 +580,7 @@ Choose a permissive license (e.g., MIT or Apache 2.0) and include `LICENSE` in t
 
 **Issue: Stale leader continues acting**
 - **Cause**: Fencing token not being validated before operations
-- **Solution**: Enable `FencingConfig.ValidateOnCriticalOps` or implement token validation in your leader tasks
+- **Solution**: Use `ValidateToken()` or `ValidateTokenOrDemote()` before critical operations, or enable periodic validation with `ValidationInterval > 0`
 
 **Issue: Election never succeeds**
 - **Cause**: Bucket doesn't exist, permissions issue, or NATS connection problems
@@ -500,8 +608,8 @@ Choose a permissive license (e.g., MIT or Apache 2.0) and include `LICENSE` in t
 
 **For high-throughput scenarios:**
 - Use connection pooling if managing multiple elections
-- Enable token caching (`FencingConfig.CacheToken = true`)
-- Set `FencingConfig.ValidationInterval` to reduce validation frequency
+- Set `ValidationInterval` to reduce validation frequency (e.g., 10s instead of 5s)
+- Use `ValidateToken()` only for critical operations, not every operation
 
 ---
 
