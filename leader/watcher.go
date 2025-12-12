@@ -3,6 +3,7 @@ package leader
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -28,6 +29,9 @@ func (e *kvElection) watchLoop(ctx context.Context) {
 		)...,
 	)
 
+	checkTicker := time.NewTicker(500 * time.Millisecond)
+	defer checkTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -38,10 +42,81 @@ func (e *kvElection) watchLoop(ctx context.Context) {
 				log.Debug("watch_closed",
 					append(e.logWithContext(ctx))...,
 				)
+				// When watcher closes, check if key still exists
+				// If not, trigger re-election
+				if !e.IsLeader() {
+					go e.checkKeyAndReelect(ctx)
+				}
 				return
 			}
 			e.handleWatchEvent(entry)
+		case <-checkTicker.C:
+			// Periodic check: if we're a follower and key doesn't exist, trigger re-election
+			// This handles cases where NATS watchers don't send deletion events
+			if !e.IsLeader() {
+				e.checkKeyAndReelect(ctx)
+			}
 		}
+	}
+}
+
+// checkKeyAndReelect checks if the key exists and triggers re-election if it doesn't.
+// This is a fallback for cases where NATS watchers don't reliably send deletion events.
+func (e *kvElection) checkKeyAndReelect(ctx context.Context) {
+	if e.IsLeader() {
+		return
+	}
+
+	entry, err := e.kv.Get(e.key)
+	if err != nil {
+		// Key doesn't exist - trigger re-election
+		log := e.getLogger()
+		log.Debug("key_not_found_triggering_reelection",
+			append(e.logWithContext(ctx),
+				zap.Error(err),
+			)...,
+		)
+		go e.attemptAcquireWithRetry(ctx)
+		return
+	}
+
+	if entry == nil || len(entry.Value()) == 0 {
+		// Key is empty - trigger re-election
+		log := e.getLogger()
+		log.Debug("key_empty_triggering_reelection",
+			append(e.logWithContext(ctx))...,
+		)
+		go e.attemptAcquireWithRetry(ctx)
+		return
+	}
+
+	// Key exists - check if leader changed
+	var payload map[string]interface{}
+	if err := json.Unmarshal(entry.Value(), &payload); err != nil {
+		return
+	}
+
+	leaderIDInterface, ok := payload["id"]
+	if !ok {
+		return
+	}
+
+	newLeaderID, ok := leaderIDInterface.(string)
+	if !ok {
+		return
+	}
+
+	currentLeaderID := e.LeaderID()
+	if currentLeaderID != "" && currentLeaderID != newLeaderID {
+		log := e.getLogger()
+		log.Info("leader_changed_periodic_check",
+			append(e.logWithContext(ctx),
+				zap.String("old_leader_id", currentLeaderID),
+				zap.String("new_leader_id", newLeaderID),
+			)...,
+		)
+		e.leaderID.Store(newLeaderID)
+		e.revision.Store(entry.Revision())
 	}
 }
 

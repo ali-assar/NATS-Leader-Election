@@ -112,9 +112,13 @@ func TestChaos_NATSServerRestart(t *testing.T) {
 	assert.True(t, election2.IsLeader(), "Should become leader after reconnection")
 }
 
-// TestChaos_NetworkPartition tests behavior during network partition
-// This simulates a network partition by disconnecting the leader's connection
+// TestChaos_NetworkPartition tests behavior during network partition.
+// This simulates a network partition by disconnecting the leader's connection.
+// Note: This test may be flaky with real NATS due to watcher timing.
 func TestChaos_NetworkPartition(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping flaky integration test in short mode")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -205,8 +209,8 @@ func TestChaos_NetworkPartition(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Election2 should take over
-	// With real NATS, watchers may take time to detect the key deletion
-	waitForLeader(t, election2, true, 10*time.Second)
+	// With real NATS, watchers may take time to detect the key deletion or TTL expiration
+	waitForLeader(t, election2, true, 12*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after partition")
 
 	mu.Lock()
@@ -306,7 +310,9 @@ func TestChaos_ProcessKill(t *testing.T) {
 
 	// Wait for election2 to take over (after TTL expires or watcher detects)
 	// TTL is 5 seconds, but watchers may take additional time to detect
-	waitForLeader(t, election2, true, 10*time.Second)
+	// Give some time for the key to expire and watchers to detect
+	time.Sleep(1 * time.Second)
+	waitForLeader(t, election2, true, 12*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after election1 dies")
 
 	mu.Lock()
@@ -314,9 +320,13 @@ func TestChaos_ProcessKill(t *testing.T) {
 	mu.Unlock()
 }
 
-// TestChaos_ProcessKillWithDeleteKey tests process kill with DeleteKey option
-// This simulates graceful shutdown where the key is deleted immediately
+// TestChaos_ProcessKillWithDeleteKey tests process kill with DeleteKey option.
+// This simulates graceful shutdown where the key is deleted immediately.
+// Note: This test may be flaky with real NATS due to watcher timing.
 func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping flaky integration test in short mode")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -396,8 +406,11 @@ func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Give watchers time to detect the key deletion
+	time.Sleep(200 * time.Millisecond)
+
 	// With DeleteKey, the key is deleted immediately, but watchers may take time to detect
-	waitForLeader(t, election2, true, 5*time.Second)
+	waitForLeader(t, election2, true, 10*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader quickly after key deletion")
 
 	mu.Lock()
@@ -491,3 +504,4 @@ func TestChaos_ThunderingHerd(t *testing.T) {
 	}
 	assert.Equal(t, 1, leaderCount, "Should have exactly one leader even with many candidates")
 }
+

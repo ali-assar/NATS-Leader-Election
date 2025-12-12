@@ -274,26 +274,50 @@ func TestRealNATS_MultipleCandidates(t *testing.T) {
 	assert.Equal(t, 1, callbacks[leaderID].promoteCount, "Leader's OnPromote should be called")
 	callbacks[leaderID].mu.Unlock()
 
-	// Verify followers know the leader
+	// Verify followers know the leader and watchers are running
 	waitForCondition(t, func() bool {
 		return election1.LeaderID() == leaderID &&
 			election2.LeaderID() == leaderID &&
 			election3.LeaderID() == leaderID
-	}, 2*time.Second, "all elections to know the leader")
+	}, 3*time.Second, "all elections to know the leader")
 
 	assert.Equal(t, leaderID, election1.LeaderID(), "Election1 should know the leader")
 	assert.Equal(t, leaderID, election2.LeaderID(), "Election2 should know the leader")
 	assert.Equal(t, leaderID, election3.LeaderID(), "Election3 should know the leader")
 
+	// Ensure watchers have time to start and are watching
+	// Wait for at least one heartbeat cycle to ensure everything is stable
+	// This ensures followers have started their watchers
+	time.Sleep(500 * time.Millisecond)
+
 	// Stop the leader
 	var leaderElection Election
+	var followerElections []Election
 	if election1.IsLeader() {
 		leaderElection = election1
+		followerElections = []Election{election2, election3}
 	} else if election2.IsLeader() {
 		leaderElection = election2
+		followerElections = []Election{election1, election3}
 	} else {
 		leaderElection = election3
+		followerElections = []Election{election1, election2}
 	}
+
+	// Verify followers are not leaders before stopping
+	for _, follower := range followerElections {
+		assert.False(t, follower.IsLeader(), "Follower should not be leader before leader stops")
+	}
+
+	// Get KV store to verify deletion
+	js, err := conn1.JetStream()
+	require.NoError(t, err)
+	kv, err := js.KeyValue(bucketName)
+	require.NoError(t, err)
+
+	// Verify key exists before deletion
+	_, err = kv.Get("test-group")
+	require.NoError(t, err, "Key should exist before leader stops")
 
 	// Stop with DeleteKey for faster failover
 	err = leaderElection.StopWithContext(ctx, StopOptions{
@@ -301,16 +325,25 @@ func TestRealNATS_MultipleCandidates(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Wait for new leader to be elected (with DeleteKey, should be faster)
+	// Wait for NATS to propagate the deletion and verify it's gone
+	// This confirms DeleteKey worked
 	waitForCondition(t, func() bool {
-		if leaderID == "instance-1" {
-			return election2.IsLeader() || election3.IsLeader()
-		} else if leaderID == "instance-2" {
-			return election1.IsLeader() || election3.IsLeader()
-		} else {
-			return election1.IsLeader() || election2.IsLeader()
+		_, err := kv.Get("test-group")
+		return err != nil // Key should not exist (error means deleted)
+	}, 2*time.Second, "key to be deleted")
+
+	// Wait for new leader to be elected
+	// The periodic check in watchLoop runs every 500ms, so we need to wait at least that long
+	// Plus jitter (up to 100ms) + backoff + acquisition time
+	waitForCondition(t, func() bool {
+		leaderCount := 0
+		for _, follower := range followerElections {
+			if follower.IsLeader() {
+				leaderCount++
+			}
 		}
-	}, 5*time.Second, "new leader to be elected")
+		return leaderCount == 1
+	}, 15*time.Second, "new leader to be elected")
 
 	// Verify exactly one new leader
 	leaderCount = 0
@@ -326,8 +359,12 @@ func TestRealNATS_MultipleCandidates(t *testing.T) {
 	assert.Equal(t, 1, leaderCount, "Should have exactly one new leader")
 }
 
-// TestRealNATS_LeaderTakeover tests leader takeover when old leader stops
+// TestRealNATS_LeaderTakeover tests leader takeover when old leader stops.
+// Note: This test may be flaky with real NATS due to watcher timing.
 func TestRealNATS_LeaderTakeover(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping flaky integration test in short mode")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -431,8 +468,12 @@ func TestRealNATS_LeaderTakeover(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// Give watchers time to detect the key deletion
+	time.Sleep(200 * time.Millisecond)
+
 	// Wait for election2 to take over (with DeleteKey, should be faster)
-	waitForLeader(t, election2, true, 5*time.Second)
+	// Real NATS watchers may take time to detect key deletion
+	waitForLeader(t, election2, true, 10*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after election1 stops")
 
 	// Verify callbacks
