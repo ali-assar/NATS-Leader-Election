@@ -54,7 +54,7 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 					e.healthFailureCount.Store(0)
 					log := e.getLogger()
 					log.Debug("health_check_recovered",
-						append(e.logWithContext(ctx))...,
+						e.logWithContext(ctx)...,
 					)
 				}
 			}

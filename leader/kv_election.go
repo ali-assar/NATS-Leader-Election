@@ -464,7 +464,9 @@ func (e *kvElection) attemptPriorityTakeover(payloadBytes []byte) error {
 	)
 
 	var newPayloadStruct leadershipPayload
-	json.Unmarshal(payloadBytes, &newPayloadStruct)
+	if err := json.Unmarshal(payloadBytes, &newPayloadStruct); err != nil {
+		return fmt.Errorf("failed to unmarshal payload after takeover: %w", err)
+	}
 
 	e.revision.Store(newRev)
 	e.token.Store(newPayloadStruct.Token)

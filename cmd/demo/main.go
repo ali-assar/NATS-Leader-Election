@@ -36,21 +36,21 @@ func main() {
 		nats.ReconnectWait(2*time.Second),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			if err != nil {
-				log.Printf("⚠️  NATS disconnected: %v", err)
+				log.Printf("NATS disconnected: %v", err)
 			}
 		}),
 		nats.ReconnectHandler(func(nc *nats.Conn) {
 			log.Printf("✓ NATS reconnected to %s", nc.ConnectedUrl())
 		}),
 		nats.ClosedHandler(func(nc *nats.Conn) {
-			log.Printf("⚠️  NATS connection closed")
+			log.Printf("NATS connection closed")
 		}),
 	)
 	if err != nil {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
 	defer nc.Close()
-	fmt.Println("✓ Connected to NATS")
+	fmt.Println("Connected to NATS")
 
 	// Step 2: Get JetStream context
 	js, err := nc.JetStream()
@@ -140,12 +140,12 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	fmt.Println("\n✓ Running... Press Ctrl+C to stop gracefully")
+	fmt.Println("\n Running... Press Ctrl+C to stop gracefully")
 	fmt.Println("  (Try running multiple instances to see leader election in action)")
 
 	// Wait for shutdown signal
 	<-sigChan
-	fmt.Println("\n⏹️  Shutdown signal received, stopping gracefully...")
+	fmt.Println("\n Shutdown signal received, stopping gracefully...")
 
 	// Step 11: Graceful shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

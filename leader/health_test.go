@@ -76,7 +76,7 @@ func TestHealthCheck_HealthyLeaderContinues(t *testing.T) {
 	// Verify health checker was called
 	assert.Greater(t, healthChecker.getCalls(), 0, "Health checker should be called")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestHealthCheck_UnhealthyLeaderDemotes(t *testing.T) {
@@ -123,7 +123,7 @@ func TestHealthCheck_UnhealthyLeaderDemotes(t *testing.T) {
 	assert.True(t, demoteCalled, "OnDemote callback should be called")
 	assert.GreaterOrEqual(t, healthChecker.getCalls(), 3, "Health checker should be called at least 3 times")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestHealthCheck_IntermittentFailures(t *testing.T) {
@@ -172,7 +172,7 @@ func TestHealthCheck_IntermittentFailures(t *testing.T) {
 	// Should still be leader (only 2 failures again)
 	assert.True(t, election.IsLeader(), "Should still be leader after intermittent failures")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestHealthCheck_Timeout(t *testing.T) {
@@ -210,7 +210,7 @@ func TestHealthCheck_Timeout(t *testing.T) {
 	// Should be demoted (timeout is treated as unhealthy)
 	assert.False(t, election.IsLeader(), "Should be demoted after health check timeouts")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestHealthCheck_NoHealthChecker(t *testing.T) {
@@ -242,7 +242,7 @@ func TestHealthCheck_NoHealthChecker(t *testing.T) {
 	// Should still be leader (no health checking)
 	assert.True(t, election.IsLeader(), "Should still be leader without health checker")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestHealthCheck_CustomThreshold(t *testing.T) {
@@ -282,5 +282,5 @@ func TestHealthCheck_CustomThreshold(t *testing.T) {
 	waitForLeader(t, election, false, 500*time.Millisecond)
 	assert.False(t, election.IsLeader(), "Should be demoted after 5 failures")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }

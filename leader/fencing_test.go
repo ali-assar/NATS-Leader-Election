@@ -30,7 +30,7 @@ func TestValidateToken_Valid(t *testing.T) {
 	waitForLeader(t, election, true, 1*time.Second)
 
 	assert.True(t, election.IsLeader(), "Instance should be leader")
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 
 	valid, err := election.ValidateToken(context.Background())
 	assert.NoError(t, err, "Failed to validate token")
@@ -94,7 +94,7 @@ func TestValidateToken_Invalid_Mismatch(t *testing.T) {
 	// Verify the local token is still the old one
 	assert.Equal(t, originalToken, election.Token(), "Local token should still be the old one")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestValidateToken_Invalid_DifferentLeader(t *testing.T) {
@@ -150,7 +150,7 @@ func TestValidateToken_Invalid_DifferentLeader(t *testing.T) {
 
 	assert.Equal(t, originalToken, election.Token(), "Local token should still be the old one")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestValidateToken_Invalid_LeaderIDMismatch(t *testing.T) {
@@ -209,7 +209,7 @@ func TestValidateToken_Invalid_LeaderIDMismatch(t *testing.T) {
 	// Now it should be "leader ID mismatch" because token matches
 	assert.Contains(t, tokenErr.Reason, "leader ID mismatch", "Error reason should indicate leader ID mismatch")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestValidateToken_Invalid_NoTokenInKV(t *testing.T) {
@@ -259,7 +259,7 @@ func TestValidateToken_Invalid_NoTokenInKV(t *testing.T) {
 	// Verify local token is still there (hasn't been cleared)
 	assert.Equal(t, originalToken, election.Token(), "Local token should still exist")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestValidationLoop_ValidToken(t *testing.T) {
@@ -296,7 +296,7 @@ func TestValidationLoop_ValidToken(t *testing.T) {
 	// Should still be leader
 	assert.True(t, election.IsLeader(), "Should still be leader after multiple validations")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestValidationLoop_InvalidToken(t *testing.T) {
@@ -360,7 +360,7 @@ func TestValidationLoop_InvalidToken(t *testing.T) {
 
 	assert.True(t, demoteCalled, "OnDemote callback should be called")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 func TestValidationLoop_Timeout(t *testing.T) {
@@ -425,5 +425,5 @@ func TestValidationLoop_Timeout(t *testing.T) {
 	// Should be demoted after timeout failures
 	assert.False(t, election.IsLeader(), "Should be demoted after validation timeouts")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }

@@ -72,7 +72,7 @@ func TestRealNATS_FullElectionCycle(t *testing.T) {
 	// Start election
 	err = election.Start(ctx)
 	require.NoError(t, err)
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 
 	// Wait to become leader
 	waitForLeader(t, election, true, 2*time.Second)
@@ -232,15 +232,15 @@ func TestRealNATS_MultipleCandidates(t *testing.T) {
 	// Start all elections
 	err = election1.Start(ctx)
 	require.NoError(t, err)
-	defer election1.Stop()
+	defer func() { _ = election1.Stop() }()
 
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	err = election3.Start(ctx)
 	require.NoError(t, err)
-	defer election3.Stop()
+	defer func() { _ = election3.Stop() }()
 
 	// Wait for one to become leader
 	waitForCondition(t, func() bool {
@@ -444,7 +444,7 @@ func TestRealNATS_LeaderTakeover(t *testing.T) {
 	// Start first election
 	err = election1.Start(ctx)
 	require.NoError(t, err)
-	defer election1.Stop()
+	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
 	waitForLeader(t, election1, true, 2*time.Second)
@@ -453,7 +453,7 @@ func TestRealNATS_LeaderTakeover(t *testing.T) {
 	// Start second election (should be follower)
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	time.Sleep(500 * time.Millisecond)
 	assert.False(t, election2.IsLeader(), "Election2 should be follower")
@@ -521,7 +521,7 @@ func TestRealNATS_HeartbeatMaintainsLeadership(t *testing.T) {
 	// Start election
 	err = election.Start(ctx)
 	require.NoError(t, err)
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 
 	// Wait to become leader
 	waitForLeader(t, election, true, 2*time.Second)
@@ -580,7 +580,7 @@ func TestRealNATS_TokenValidation(t *testing.T) {
 	// Start election
 	err = election.Start(ctx)
 	require.NoError(t, err)
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 
 	// Wait to become leader
 	waitForLeader(t, election, true, 2*time.Second)

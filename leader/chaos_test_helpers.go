@@ -91,6 +91,8 @@ func (tc TimingConfig) CalculateTTLExpirationTimeout() (sleepDuration, waitTimeo
 	detectionDelays := tc.PeriodicCheckInterval + tc.InitialJitter + tc.MaxRetryBackoff
 	
 	// 4. Total minimum (grace period may be part of TTL wait)
+	// Note: gracePeriod is considered in the overall timeout calculation
+	_ = gracePeriod
 	// In practice, key expires TTL after last heartbeat, so we use TTL + detection
 	totalMinimum := ttlExpiration + detectionDelays
 	

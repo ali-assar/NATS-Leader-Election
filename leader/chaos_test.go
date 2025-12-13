@@ -55,7 +55,7 @@ func TestChaos_NATSServerRestart(t *testing.T) {
 	// Start election
 	err = election.Start(ctx)
 	require.NoError(t, err)
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 
 	// Wait to become leader
 	waitForLeader(t, election, true, 2*time.Second)
@@ -105,7 +105,7 @@ func TestChaos_NATSServerRestart(t *testing.T) {
 
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	// Should be able to become leader again
 	waitForLeader(t, election2, true, 3*time.Second)
@@ -188,7 +188,7 @@ func TestChaos_NetworkPartition(t *testing.T) {
 	// If both start simultaneously, they compete and election2 might win
 	err = election1.Start(ctx)
 	require.NoError(t, err)
-	defer election1.Stop()
+	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader before starting election2
 	initialTiming := TimingConfig{
@@ -200,7 +200,7 @@ func TestChaos_NetworkPartition(t *testing.T) {
 	// Now start election2 (it will become a follower since election1 is already leader)
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	// Simulate network partition by closing connection1
 	conn1.Close()
@@ -301,7 +301,7 @@ func TestChaos_ProcessKill(t *testing.T) {
 	// Now start election2 (it will become a follower since election1 is already leader)
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	// Simulate process kill by stopping without cleanup (no DeleteKey)
 	// This simulates a crash where the process dies without graceful shutdown
@@ -309,7 +309,7 @@ func TestChaos_ProcessKill(t *testing.T) {
 	conn1.Close()
 
 	// Then stop (which may fail due to closed connection, but that's OK)
-	election1.Stop()
+	_ = election1.Stop()
 
 	// Calculate timeout for TTL expiration scenario (process kill without DeleteKey)
 	ttlTiming := TimingConfig{
@@ -406,7 +406,7 @@ func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
 	// Now start election2 (it will become a follower since election1 is already leader)
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	// Stop with DeleteKey option (simulates graceful shutdown)
 	err = election1.StopWithContext(ctx, StopOptions{
@@ -505,7 +505,7 @@ func TestChaos_PriorityTakeover(t *testing.T) {
 	// Start election1 first (lower priority)
 	err = election1.Start(ctx)
 	require.NoError(t, err)
-	defer election1.Stop()
+	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
 	initialTiming := TimingConfig{
@@ -517,7 +517,7 @@ func TestChaos_PriorityTakeover(t *testing.T) {
 	// Start election2 (higher priority)
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	// Wait for election2 to take over
 	// Priority takeover should be fast (no need to wait for TTL)
@@ -599,7 +599,7 @@ func TestChaos_PriorityTakeoverWithNetworkPartition(t *testing.T) {
 	// Start election1 first (lower priority)
 	err = election1.Start(ctx)
 	require.NoError(t, err)
-	defer election1.Stop()
+	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
 	initialTiming := TimingConfig{
@@ -611,7 +611,7 @@ func TestChaos_PriorityTakeoverWithNetworkPartition(t *testing.T) {
 	// Start election2 (higher priority, but as follower initially)
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	// Simulate network partition by closing connection1
 	conn1.Close()
@@ -674,7 +674,7 @@ func TestChaos_ThunderingHerd(t *testing.T) {
 	defer func() {
 		for i, election := range elections {
 			if election != nil {
-				election.Stop()
+				_ = election.Stop()
 			}
 			if conns[i] != nil {
 				conns[i].Close()

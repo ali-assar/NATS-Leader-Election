@@ -174,7 +174,7 @@ func TestMetrics_AcquireAttempts(t *testing.T) {
 	assert.Equal(t, "test-group", attempt["role"])
 	assert.Equal(t, "instance-1", attempt["instance_id"])
 
-	election.Stop()
+	_ = election.Stop()
 }
 
 func TestMetrics_AcquireAttempts_Failure(t *testing.T) {
@@ -216,7 +216,7 @@ func TestMetrics_AcquireAttempts_Failure(t *testing.T) {
 	// For now, we'll just verify the election works correctly
 	assert.False(t, election.IsLeader(), "Should not be leader when key exists")
 
-	election.Stop()
+	_ = election.Stop()
 }
 
 func TestMetrics_HeartbeatDuration(t *testing.T) {
@@ -250,7 +250,7 @@ func TestMetrics_HeartbeatDuration(t *testing.T) {
 	assert.Equal(t, "success", labels["status"])
 	assert.Equal(t, "test-group", labels["role"])
 
-	election.Stop()
+	_ = election.Stop()
 }
 
 func TestMetrics_HeartbeatDuration_Failure(t *testing.T) {
@@ -305,7 +305,7 @@ func TestMetrics_HeartbeatDuration_Failure(t *testing.T) {
 	// Should also have recorded failure metric
 	assert.GreaterOrEqual(t, len(mockMetrics.failures), 1, "Should record failure metric")
 
-	election.Stop()
+	_ = election.Stop()
 }
 
 func TestMetrics_LeaderDuration(t *testing.T) {
@@ -403,7 +403,7 @@ func TestMetrics_TokenValidationFailures(t *testing.T) {
 		assert.False(t, election.IsLeader(), "Leader should be demoted after token becomes invalid")
 	}
 
-	election.Stop()
+	_ = election.Stop()
 }
 
 func TestMetrics_ConnectionStatus(t *testing.T) {
@@ -429,7 +429,7 @@ func TestMetrics_ConnectionStatus(t *testing.T) {
 	// With mock, connection monitor won't be created, so we can't test this fully
 	// But we can verify the metric interface is called correctly
 
-	election.Stop()
+	_ = election.Stop()
 }
 
 func TestMetrics_NoMetrics(t *testing.T) {
@@ -485,5 +485,5 @@ func TestMetrics_Labels(t *testing.T) {
 	assert.Equal(t, "my-instance", labels["instance_id"])
 	assert.Equal(t, "my-bucket", labels["bucket"])
 
-	election.Stop()
+	_ = election.Stop()
 }

@@ -203,7 +203,7 @@ func TestCircuitBreaker_Open(t *testing.T) {
 func TestCircuitBreaker_Cooldown(t *testing.T) {
 	cb := NewCircuitBreaker(3, 100*time.Millisecond)
 	for i := 0; i < 3; i++ {
-		cb.Call(func() error { return errors.New("failure") })
+		_ = cb.Call(func() error { return errors.New("failure") })
 	}
 	time.Sleep(150 * time.Millisecond)
 

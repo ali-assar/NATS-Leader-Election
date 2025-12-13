@@ -80,7 +80,7 @@ func (e *kvElection) validationLoop(ctx context.Context) {
 				consecutiveFailures = 0
 				log := e.getLogger()
 				log.Debug("token_validation_recovered",
-					append(e.logWithContext(ctx))...,
+					e.logWithContext(ctx)...,
 				)
 			}
 		}

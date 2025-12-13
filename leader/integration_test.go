@@ -642,8 +642,8 @@ func TestFencingToken_NewLeaderInvalidatesOld_Integration(t *testing.T) {
 	assert.Equal(t, tokenB, kvToken, "KV token should match B's token")
 
 	// Cleanup
-	electionA.Stop()
-	electionB.Stop()
+	_ = electionA.Stop()
+	_ = electionB.Stop()
 }
 
 // TestFencingToken_OperationRejection_Integration tests that operations with
@@ -740,7 +740,7 @@ func TestFencingToken_OperationRejection_Integration(t *testing.T) {
 	assert.Equal(t, "operation-2", operationsRejected[0], "Second operation should be rejected")
 	mu.Unlock()
 
-	election.Stop()
+	_ = election.Stop()
 }
 
 // TestFencingToken_PeriodicValidation_Integration tests that the validation loop
@@ -811,5 +811,5 @@ func TestFencingToken_PeriodicValidation_Integration(t *testing.T) {
 	demotionDelay := demoteTime.Sub(invalidationTime)
 	assert.Less(t, demotionDelay, 500*time.Millisecond, "Demotion should happen quickly after token invalidation")
 
-	election.Stop()
+	_ = election.Stop()
 }

@@ -137,7 +137,6 @@ func (m *natsConnectionMonitor) handleClosed(nc *nats.Conn) {
 // disconnectHandler manages disconnect grace period for an election
 type disconnectHandler struct {
 	election       *kvElection
-	gracePeriod    time.Duration
 	timer          *time.Timer
 	mu             sync.Mutex
 	disconnectedAt time.Time
@@ -196,7 +195,7 @@ func (d *disconnectHandler) handleGracePeriodExpired() {
 			// Reconnected, don't demote
 			log := d.election.getLogger()
 			log.Info("connection_reconnected_before_grace_period",
-				append(d.election.logWithContext(d.election.ctx))...,
+				d.election.logWithContext(d.election.ctx)...,
 			)
 			return
 		}
@@ -246,7 +245,7 @@ func (e *kvElection) handleReconnect() {
 
 	log := e.getLogger()
 	log.Info("connection_reconnected",
-		append(e.logWithContext(e.ctx))...,
+		e.logWithContext(e.ctx)...,
 	)
 
 	if e.cfg.Metrics != nil {
@@ -263,7 +262,7 @@ func (e *kvElection) handleReconnect() {
 	}
 
 	log.Info("verifying_leadership_after_reconnect",
-		append(e.logWithContext(e.ctx))...,
+		e.logWithContext(e.ctx)...,
 	)
 
 	e.wg.Add(1)
@@ -319,7 +318,7 @@ func (e *kvElection) verifyLeadershipAfterReconnect() {
 	}
 
 	log.Info("reconnect_verification_success",
-		append(e.logWithContext(ctx))...,
+		e.logWithContext(ctx)...,
 	)
 
 	// Resume heartbeat loop if it was stopped

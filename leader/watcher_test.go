@@ -838,11 +838,11 @@ func TestJitterAndBackoffBehavior(t *testing.T) {
 		if attemptCount == 1 {
 			// Fail first attempt to trigger backoff
 			// Create a temporary key to make Create() fail
-			mockKV.Create("temp-key", []byte("temp"))
+			_, _ = mockKV.Create("temp-key", []byte("temp"))
 			return 0, fmt.Errorf("key already exists")
 		}
 		// Clear the temp key and succeed on second attempt
-		mockKV.Delete("temp-key")
+		_ = mockKV.Delete("temp-key")
 		// Reset CreateFunc to use normal behavior
 		mockKV.CreateFunc = nil
 		return mockKV.Create(key, value, opts...)

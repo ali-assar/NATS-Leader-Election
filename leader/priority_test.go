@@ -70,7 +70,7 @@ func TestPriorityTakeover_Basic(t *testing.T) {
 	ctx := context.Background()
 	err = election1.Start(ctx)
 	require.NoError(t, err)
-	defer election1.Stop()
+	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
 	waitForLeader(t, election1, true, 2*time.Second)
@@ -83,7 +83,7 @@ func TestPriorityTakeover_Basic(t *testing.T) {
 	// Start election2 (higher priority)
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	// Wait a bit for election2 to start and attempt acquisition
 	time.Sleep(100 * time.Millisecond)
@@ -137,7 +137,7 @@ func TestPriorityTakeover_WithoutTakeoverEnabled(t *testing.T) {
 	ctx := context.Background()
 	err = election1.Start(ctx)
 	require.NoError(t, err)
-	defer election1.Stop()
+	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
 	waitForLeader(t, election1, true, 2*time.Second)
@@ -146,7 +146,7 @@ func TestPriorityTakeover_WithoutTakeoverEnabled(t *testing.T) {
 	// Start election2 (higher priority but takeover disabled)
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	// Wait a bit to ensure no takeover happens
 	time.Sleep(1 * time.Second)
@@ -190,7 +190,7 @@ func TestPriorityTakeover_EqualPriority(t *testing.T) {
 	ctx := context.Background()
 	err = election1.Start(ctx)
 	require.NoError(t, err)
-	defer election1.Stop()
+	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
 	waitForLeader(t, election1, true, 2*time.Second)
@@ -199,7 +199,7 @@ func TestPriorityTakeover_EqualPriority(t *testing.T) {
 	// Start election2 (same priority)
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	// Wait a bit
 	time.Sleep(1 * time.Second)
@@ -243,7 +243,7 @@ func TestPriorityTakeover_LowerPriorityCannotTakeover(t *testing.T) {
 	ctx := context.Background()
 	err = election1.Start(ctx)
 	require.NoError(t, err)
-	defer election1.Stop()
+	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
 	waitForLeader(t, election1, true, 2*time.Second)
@@ -252,7 +252,7 @@ func TestPriorityTakeover_LowerPriorityCannotTakeover(t *testing.T) {
 	// Start election2 (lower priority)
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	// Wait a bit
 	time.Sleep(1 * time.Second)
@@ -347,7 +347,7 @@ func TestPriorityTakeover_MultipleHighPriority(t *testing.T) {
 	ctx := context.Background()
 	err = election1.Start(ctx)
 	require.NoError(t, err)
-	defer election1.Stop()
+	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
 	waitForLeader(t, election1, true, 2*time.Second)
@@ -356,11 +356,11 @@ func TestPriorityTakeover_MultipleHighPriority(t *testing.T) {
 	// Start both high priority instances simultaneously
 	err = election2.Start(ctx)
 	require.NoError(t, err)
-	defer election2.Stop()
+	defer func() { _ = election2.Stop() }()
 
 	err = election3.Start(ctx)
 	require.NoError(t, err)
-	defer election3.Stop()
+	defer func() { _ = election3.Stop() }()
 
 	// Wait for one of them to take over
 	waitForCondition(t, func() bool {
@@ -405,7 +405,7 @@ func TestPriorityTakeover_HeartbeatIncludesPriority(t *testing.T) {
 	ctx := context.Background()
 	err = election.Start(ctx)
 	require.NoError(t, err)
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 
 	// Wait to become leader
 	waitForLeader(t, election, true, 2*time.Second)

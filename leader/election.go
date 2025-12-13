@@ -483,7 +483,7 @@ func (a *natsWatcherAdapter) Updates() <-chan Entry {
 }
 
 func (a *natsWatcherAdapter) Stop() {
-	a.watcher.Stop()
+	_ = a.watcher.Stop()
 }
 
 type natsEntryAdapter struct {

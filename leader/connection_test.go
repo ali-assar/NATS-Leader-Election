@@ -57,7 +57,7 @@ func TestDisconnect_GracePeriod(t *testing.T) {
 	assert.False(t, election.IsLeader(), "Should be demoted after grace period expires")
 	assert.True(t, demoteCalled, "OnDemote should be called")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 // TestDisconnect_NoDemotionIfReconnected tests that no demotion occurs
@@ -103,7 +103,7 @@ func TestDisconnect_NoDemotionIfReconnected(t *testing.T) {
 	// Should still be leader (timer was stopped)
 	assert.True(t, election.IsLeader(), "Should still be leader if reconnected within grace period")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
 
 // TestReconnect_Verification tests reconnection verification logic
@@ -164,5 +164,5 @@ func TestReconnect_Verification(t *testing.T) {
 	assert.False(t, isValid, "Token should be invalid after change")
 	assert.Error(t, err, "Should return error for invalid token")
 
-	defer election.Stop()
+	defer func() { _ = election.Stop() }()
 }
