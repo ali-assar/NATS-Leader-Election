@@ -20,14 +20,15 @@ func TestAttemptAcquire_Success(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	adapter := NewMockConnAdapter(nc)
+	election, err := NewElection(adapter, cfg)
 	assert.NoError(t, err)
 	assert.NotNil(t, election)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	assert.True(t, election.IsLeader(), "Expected to be leader")
 	assert.Equal(t, "instance-1", election.LeaderID())
@@ -50,13 +51,13 @@ func TestAttemptAcquire_KeyExists(t *testing.T) {
 	_, err := kv.Create("test-group", payload)
 	assert.NoError(t, err)
 
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, false, 1*time.Second)
+	WaitForLeader(t, election, false, 1*time.Second)
 
 	assert.False(t, election.IsLeader(), "Expected NOT to be leader")
 	assert.Empty(t, election.LeaderID())
@@ -90,7 +91,7 @@ func TestAttemptAcquire_Concurrent(t *testing.T) {
 
 	// All instances share the same mock connection (same KV store)
 	nc := natsmock.NewMockConn()
-	adapter := newMockConnAdapter(nc)
+	adapter := NewMockConnAdapter(nc)
 
 	// Create all elections
 	election1, err := NewElection(adapter, cfg1)
@@ -121,7 +122,7 @@ func TestAttemptAcquire_Concurrent(t *testing.T) {
 
 	// Wait for all attemptAcquire goroutines to complete
 	// At least one should become leader
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election1.IsLeader() || election2.IsLeader() || election3.IsLeader()
 	}, 1*time.Second, "at least one leader")
 
@@ -151,7 +152,8 @@ func TestStart_AlreadyStarted(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	adapter := NewMockConnAdapter(nc)
+	election, err := NewElection(adapter, cfg)
 	assert.NoError(t, err)
 
 	// Start first time - should succeed
@@ -175,7 +177,8 @@ func TestOnPromote_Callback(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	adapter := NewMockConnAdapter(nc)
+	election, err := NewElection(adapter, cfg)
 	assert.NoError(t, err)
 
 	// Track if callback was called
@@ -194,7 +197,7 @@ func TestOnPromote_Callback(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for attemptAcquire to complete and callback to be called
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return callbackCalled
 	}, 1*time.Second, "OnPromote callback")
 
@@ -216,7 +219,8 @@ func TestOnDemote_Callback(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	adapter := NewMockConnAdapter(nc)
+	election, err := NewElection(adapter, cfg)
 	assert.NoError(t, err)
 
 	// Track if callback was called
@@ -229,7 +233,7 @@ func TestOnDemote_Callback(t *testing.T) {
 	// Start and become leader
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader())
 
 	// Stop the election (should trigger demote)
@@ -237,7 +241,7 @@ func TestOnDemote_Callback(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for callback to be called
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return demoteCalled
 	}, 500*time.Millisecond, "OnDemote callback")
 
@@ -277,129 +281,12 @@ func TestNewElection_InvalidConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewElection(newMockConnAdapter(nc), tt.cfg)
+			adapter := NewMockConnAdapter(nc)
+		_, err := NewElection(adapter, tt.cfg)
 			assert.Error(t, err, "Expected error for invalid config: %s", tt.name)
 		})
 	}
 }
 
-// mockKeyValueAdapter adapts *natsmock.MockKeyValue to leader.KeyValue interface
-type mockKeyValueAdapter struct {
-	kv *natsmock.MockKeyValue
-}
-
-func (a *mockKeyValueAdapter) Create(key string, value []byte, opts ...interface{}) (uint64, error) {
-	return a.kv.Create(key, value)
-}
-
-func (a *mockKeyValueAdapter) Update(key string, value []byte, rev uint64, opts ...interface{}) (uint64, error) {
-	return a.kv.Update(key, value, rev)
-}
-
-func (a *mockKeyValueAdapter) Get(key string) (Entry, error) {
-	mockEntry, err := a.kv.Get(key)
-	if err != nil {
-		return nil, err
-	}
-	if mockEntry == nil {
-		return nil, nil
-	}
-	return &mockEntryAdapter{entry: mockEntry}, nil
-}
-
-func (a *mockKeyValueAdapter) Delete(key string) error {
-	return a.kv.Delete(key)
-}
-
-func (a *mockKeyValueAdapter) Watch(key string, opts ...interface{}) (Watcher, error) {
-	mockWatcher, err := a.kv.Watch(key)
-	if err != nil {
-		return nil, err
-	}
-	return &mockWatcherAdapter{watcher: mockWatcher}, nil
-}
-
-// mockEntryAdapter adapts natsmock.Entry to our Entry interface
-type mockEntryAdapter struct {
-	entry natsmock.Entry
-}
-
-func (a *mockEntryAdapter) Key() string {
-	return a.entry.Key()
-}
-
-func (a *mockEntryAdapter) Value() []byte {
-	return a.entry.Value()
-}
-
-func (a *mockEntryAdapter) Revision() uint64 {
-	return a.entry.Revision()
-}
-
-// mockWatcherAdapter adapts natsmock.Watcher to our Watcher interface
-type mockWatcherAdapter struct {
-	watcher   natsmock.Watcher
-	entryChan chan Entry
-	once      sync.Once
-	initChan  chan struct{}
-}
-
-func (a *mockWatcherAdapter) Updates() <-chan Entry {
-	// Initialize the channel and goroutine only once
-	// This ensures that even if Updates() is called multiple times (which shouldn't happen
-	// but could due to race conditions), only one goroutine is created per watcher instance.
-	// This matches the behavior of real NATS where Updates() returns the same channel.
-	a.once.Do(func() {
-		a.entryChan = make(chan Entry, 10)
-		a.initChan = make(chan struct{})
-		go func() {
-			defer close(a.entryChan)
-			close(a.initChan) // Signal that goroutine is ready
-			for mockEntry := range a.watcher.Updates() {
-				if mockEntry != nil {
-					a.entryChan <- &mockEntryAdapter{entry: mockEntry}
-				} else {
-					// nil entry means key was deleted
-					a.entryChan <- nil
-				}
-			}
-		}()
-		// Wait for goroutine to be ready
-		<-a.initChan
-	})
-	return a.entryChan
-}
-
-func (a *mockWatcherAdapter) Stop() {
-	a.watcher.Stop()
-}
-
-// mockJetStreamAdapter adapts *natsmock.MockJetStream to leader.JetStreamContext interface
-type mockJetStreamAdapter struct {
-	js *natsmock.MockJetStream
-}
-
-func (a *mockJetStreamAdapter) KeyValue(bucket string) (KeyValue, error) {
-	kv, err := a.js.KeyValue(bucket)
-	if err != nil {
-		return nil, err
-	}
-	return &mockKeyValueAdapter{kv: kv}, nil
-}
-
-// mockConnAdapter adapts *natsmock.MockConn to leader.JetStreamProvider interface
-type mockConnAdapter struct {
-	conn *natsmock.MockConn
-}
-
-func newMockConnAdapter(conn *natsmock.MockConn) *mockConnAdapter {
-	return &mockConnAdapter{conn: conn}
-}
-
-func (a *mockConnAdapter) JetStream() (JetStreamContext, error) {
-	js, err := a.conn.JetStream()
-	if err != nil {
-		return nil, err
-	}
-	return &mockJetStreamAdapter{js: js}, nil
-}
+// Mock adapters are now in test_adapters.go
+// Use NewMockConnAdapter() instead of newMockConnAdapter()

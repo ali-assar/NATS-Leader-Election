@@ -27,7 +27,7 @@ func TestFullElectionCycle_Integration(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 	assert.NotNil(t, election)
 
@@ -50,13 +50,13 @@ func TestFullElectionCycle_Integration(t *testing.T) {
 	// Start election and wait to become leader
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	assert.True(t, election.IsLeader(), "Expected to be leader")
 	assert.NotEmpty(t, election.Token(), "Expected to have a token")
 	assert.NotEmpty(t, election.LeaderID(), "Expected to have leader ID")
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return promoteCount > 0
 	}, 1*time.Second, "OnPromote callback")
 	assert.Equal(t, 1, promoteCount, "OnPromote should be called once")
@@ -90,11 +90,11 @@ func TestFullElectionCycle_Integration(t *testing.T) {
 	}
 
 	// Wait for demotion (heartbeat will fail on next interval)
-	waitForLeader(t, election, false, heartbeatInterval*2)
+	WaitForLeader(t, election, false, heartbeatInterval*2)
 	assert.False(t, election.IsLeader(), "Expected to be demoted after revision mismatch")
 
 	// Wait for onDemote callback
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return demoteCalled
 	}, 500*time.Millisecond, "OnDemote callback")
 	assert.True(t, demoteCalled, "OnDemote callback should be called")
@@ -135,11 +135,11 @@ func TestFullElectionCycle_Integration(t *testing.T) {
 	}
 
 	// Wait for election to become leader again (with jitter, may take up to 500ms)
-	waitForLeader(t, election, true, 500*time.Millisecond)
+	WaitForLeader(t, election, true, 500*time.Millisecond)
 	assert.True(t, election.IsLeader(), "Expected to become leader after re-election")
 
 	// Wait for onPromote callback to be called again
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return promoteCount >= 2
 	}, 500*time.Millisecond, "OnPromote callback on re-election")
 	assert.Equal(t, 2, promoteCount, "OnPromote should be called twice")
@@ -177,7 +177,7 @@ func TestMultipleInstances_Integration(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	adapter := newMockConnAdapter(nc)
+	adapter := NewMockConnAdapter(nc)
 
 	// Setup callback tracking for all instances
 	type instanceCallbacks struct {
@@ -282,7 +282,7 @@ func TestMultipleInstances_Integration(t *testing.T) {
 
 	wg.Wait()
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election1.IsLeader() || election2.IsLeader() || election3.IsLeader()
 	}, 1*time.Second, "at least one leader")
 
@@ -359,7 +359,7 @@ func TestMultipleInstances_Integration(t *testing.T) {
 		}
 		watcherMu.Unlock()
 		// Wait for watchers to process the initial entry
-		waitForCondition(t, func() bool {
+		WaitForCondition(t, func() bool {
 			return election1.LeaderID() == leaderID &&
 				election2.LeaderID() == leaderID &&
 				election3.LeaderID() == leaderID
@@ -396,7 +396,7 @@ func TestMultipleInstances_Integration(t *testing.T) {
 
 	// Wait for a new leader to be elected (with jitter, may take up to 500ms)
 	// Check if any election that wasn't the old leader becomes leader
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		if oldLeaderID == "instance-1" {
 			return election2.IsLeader() || election3.IsLeader()
 		} else if oldLeaderID == "instance-2" {
@@ -423,7 +423,7 @@ func TestMultipleInstances_Integration(t *testing.T) {
 	assert.NotEqual(t, oldLeaderID, newLeaderID, "New leader should be different from old leader")
 
 	// Wait for new leader to create the key
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		entry, err := mockKV.Get("test-group")
 		return err == nil && entry != nil
 	}, 1*time.Second, "new leader to create the key")
@@ -514,7 +514,7 @@ func TestFencingToken_NewLeaderInvalidatesOld_Integration(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	adapter := newMockConnAdapter(nc)
+	adapter := NewMockConnAdapter(nc)
 
 	// Create both elections
 	electionA, err := NewElection(adapter, cfgA)
@@ -525,7 +525,7 @@ func TestFencingToken_NewLeaderInvalidatesOld_Integration(t *testing.T) {
 	// Start instance A first - it should become leader
 	err = electionA.Start(context.Background())
 	assert.NoError(t, err)
-	waitForLeader(t, electionA, true, 1*time.Second)
+	WaitForLeader(t, electionA, true, 1*time.Second)
 	assert.True(t, electionA.IsLeader(), "Instance A should be leader")
 
 	tokenA := electionA.Token()
@@ -577,7 +577,7 @@ func TestFencingToken_NewLeaderInvalidatesOld_Integration(t *testing.T) {
 	}
 
 	// Wait for A to be demoted (heartbeat fails)
-	waitForLeader(t, electionA, false, 500*time.Millisecond)
+	WaitForLeader(t, electionA, false, 500*time.Millisecond)
 
 	// Get current entry from KV
 	entry, err := mockKV.Get("test-group")
@@ -659,7 +659,7 @@ func TestFencingToken_OperationRejection_Integration(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	// Track operations
@@ -694,7 +694,7 @@ func TestFencingToken_OperationRejection_Integration(t *testing.T) {
 	// Start and become leader
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Perform operation while leader - should succeed
 	success := performOperation("operation-1")
@@ -727,7 +727,7 @@ func TestFencingToken_OperationRejection_Integration(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for validation loop to detect invalid token and demote
-	waitForLeader(t, election, false, 500*time.Millisecond)
+	WaitForLeader(t, election, false, 500*time.Millisecond)
 
 	// Try to perform operation after losing leadership - should be rejected
 	success = performOperation("operation-2")
@@ -756,7 +756,7 @@ func TestFencingToken_PeriodicValidation_Integration(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	var demoteCalled bool
@@ -769,7 +769,7 @@ func TestFencingToken_PeriodicValidation_Integration(t *testing.T) {
 	// Start and become leader
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Wait for at least one validation cycle to complete (token is valid)
@@ -801,7 +801,7 @@ func TestFencingToken_PeriodicValidation_Integration(t *testing.T) {
 
 	// Wait for validation loop to detect invalid token
 	// Should detect within one validation interval (200ms) + some buffer
-	waitForLeader(t, election, false, 500*time.Millisecond)
+	WaitForLeader(t, election, false, 500*time.Millisecond)
 
 	// Verify demotion happened
 	assert.False(t, election.IsLeader(), "Should be demoted after token becomes invalid")

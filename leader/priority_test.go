@@ -37,10 +37,10 @@ func TestPriorityTakeover_Basic(t *testing.T) {
 		AllowPriorityTakeover: true,
 	}
 
-	election1, err := NewElection(newMockConnAdapter(nc), cfg1)
+	election1, err := NewElection(NewMockConnAdapter(nc), cfg1)
 	require.NoError(t, err)
 
-	election2, err := NewElection(newMockConnAdapter(nc), cfg2)
+	election2, err := NewElection(NewMockConnAdapter(nc), cfg2)
 	require.NoError(t, err)
 
 	// Track callbacks
@@ -73,7 +73,7 @@ func TestPriorityTakeover_Basic(t *testing.T) {
 	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
-	waitForLeader(t, election1, true, 2*time.Second)
+	WaitForLeader(t, election1, true, 2*time.Second)
 	assert.True(t, election1.IsLeader(), "Election1 should be leader")
 
 	mu.Lock()
@@ -90,7 +90,7 @@ func TestPriorityTakeover_Basic(t *testing.T) {
 
 	// Wait for election2 to take over
 	// Priority takeover should happen quickly since election2 will attempt on Start()
-	waitForLeader(t, election2, true, 3*time.Second)
+	WaitForLeader(t, election2, true, 3*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should take over leadership")
 
 	// Wait a bit more for election1 to detect the takeover
@@ -127,10 +127,10 @@ func TestPriorityTakeover_WithoutTakeoverEnabled(t *testing.T) {
 		AllowPriorityTakeover: false, // Disabled
 	}
 
-	election1, err := NewElection(newMockConnAdapter(nc), cfg1)
+	election1, err := NewElection(NewMockConnAdapter(nc), cfg1)
 	require.NoError(t, err)
 
-	election2, err := NewElection(newMockConnAdapter(nc), cfg2)
+	election2, err := NewElection(NewMockConnAdapter(nc), cfg2)
 	require.NoError(t, err)
 
 	// Start election1 first
@@ -140,7 +140,7 @@ func TestPriorityTakeover_WithoutTakeoverEnabled(t *testing.T) {
 	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
-	waitForLeader(t, election1, true, 2*time.Second)
+	WaitForLeader(t, election1, true, 2*time.Second)
 	assert.True(t, election1.IsLeader(), "Election1 should be leader")
 
 	// Start election2 (higher priority but takeover disabled)
@@ -180,10 +180,10 @@ func TestPriorityTakeover_EqualPriority(t *testing.T) {
 		AllowPriorityTakeover: true,
 	}
 
-	election1, err := NewElection(newMockConnAdapter(nc), cfg1)
+	election1, err := NewElection(NewMockConnAdapter(nc), cfg1)
 	require.NoError(t, err)
 
-	election2, err := NewElection(newMockConnAdapter(nc), cfg2)
+	election2, err := NewElection(NewMockConnAdapter(nc), cfg2)
 	require.NoError(t, err)
 
 	// Start election1 first
@@ -193,7 +193,7 @@ func TestPriorityTakeover_EqualPriority(t *testing.T) {
 	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
-	waitForLeader(t, election1, true, 2*time.Second)
+	WaitForLeader(t, election1, true, 2*time.Second)
 	assert.True(t, election1.IsLeader(), "Election1 should be leader")
 
 	// Start election2 (same priority)
@@ -233,10 +233,10 @@ func TestPriorityTakeover_LowerPriorityCannotTakeover(t *testing.T) {
 		AllowPriorityTakeover: true,
 	}
 
-	election1, err := NewElection(newMockConnAdapter(nc), cfg1)
+	election1, err := NewElection(NewMockConnAdapter(nc), cfg1)
 	require.NoError(t, err)
 
-	election2, err := NewElection(newMockConnAdapter(nc), cfg2)
+	election2, err := NewElection(NewMockConnAdapter(nc), cfg2)
 	require.NoError(t, err)
 
 	// Start election1 first (higher priority)
@@ -246,7 +246,7 @@ func TestPriorityTakeover_LowerPriorityCannotTakeover(t *testing.T) {
 	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
-	waitForLeader(t, election1, true, 2*time.Second)
+	WaitForLeader(t, election1, true, 2*time.Second)
 	assert.True(t, election1.IsLeader(), "Election1 should be leader")
 
 	// Start election2 (lower priority)
@@ -277,24 +277,24 @@ func TestPriorityTakeover_Validation(t *testing.T) {
 		AllowPriorityTakeover: true,
 	}
 
-	_, err := NewElection(newMockConnAdapter(nc), cfg)
+	_, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.Error(t, err, "Should reject priority 0 when AllowPriorityTakeover is true")
 	assert.Contains(t, err.Error(), "priority must be > 0", "Error should mention priority validation")
 
 	// Test: Negative priority
 	cfg.Priority = -1
-	_, err = NewElection(newMockConnAdapter(nc), cfg)
+	_, err = NewElection(NewMockConnAdapter(nc), cfg)
 	assert.Error(t, err, "Should reject negative priority")
 
 	// Test: Valid configuration (priority > 0 with takeover enabled)
 	cfg.Priority = 10
-	_, err = NewElection(newMockConnAdapter(nc), cfg)
+	_, err = NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err, "Should accept valid priority configuration")
 
 	// Test: Priority 0 with takeover disabled (should be OK)
 	cfg.Priority = 0
 	cfg.AllowPriorityTakeover = false
-	_, err = NewElection(newMockConnAdapter(nc), cfg)
+	_, err = NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err, "Should accept priority 0 when takeover is disabled")
 }
 
@@ -334,13 +334,13 @@ func TestPriorityTakeover_MultipleHighPriority(t *testing.T) {
 		AllowPriorityTakeover: true,
 	}
 
-	election1, err := NewElection(newMockConnAdapter(nc), cfg1)
+	election1, err := NewElection(NewMockConnAdapter(nc), cfg1)
 	require.NoError(t, err)
 
-	election2, err := NewElection(newMockConnAdapter(nc), cfg2)
+	election2, err := NewElection(NewMockConnAdapter(nc), cfg2)
 	require.NoError(t, err)
 
-	election3, err := NewElection(newMockConnAdapter(nc), cfg3)
+	election3, err := NewElection(NewMockConnAdapter(nc), cfg3)
 	require.NoError(t, err)
 
 	// Start election1 first (low priority)
@@ -350,7 +350,7 @@ func TestPriorityTakeover_MultipleHighPriority(t *testing.T) {
 	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
-	waitForLeader(t, election1, true, 2*time.Second)
+	WaitForLeader(t, election1, true, 2*time.Second)
 	assert.True(t, election1.IsLeader(), "Election1 should be leader")
 
 	// Start both high priority instances simultaneously
@@ -363,7 +363,7 @@ func TestPriorityTakeover_MultipleHighPriority(t *testing.T) {
 	defer func() { _ = election3.Stop() }()
 
 	// Wait for one of them to take over
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election2.IsLeader() || election3.IsLeader()
 	}, 3*time.Second, "one high-priority instance to take over")
 
@@ -399,7 +399,7 @@ func TestPriorityTakeover_HeartbeatIncludesPriority(t *testing.T) {
 		AllowPriorityTakeover: true,
 	}
 
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -408,13 +408,13 @@ func TestPriorityTakeover_HeartbeatIncludesPriority(t *testing.T) {
 	defer func() { _ = election.Stop() }()
 
 	// Wait to become leader
-	waitForLeader(t, election, true, 2*time.Second)
+	WaitForLeader(t, election, true, 2*time.Second)
 
 	// Wait for at least one heartbeat
 	time.Sleep(300 * time.Millisecond)
 
 	// Get the key from KV store and verify priority is in payload
-	adapter := newMockConnAdapter(nc)
+	adapter := NewMockConnAdapter(nc)
 	js, err := adapter.JetStream()
 	require.NoError(t, err)
 

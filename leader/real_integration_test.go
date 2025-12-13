@@ -75,13 +75,13 @@ func TestRealNATS_FullElectionCycle(t *testing.T) {
 	defer func() { _ = election.Stop() }()
 
 	// Wait to become leader
-	waitForLeader(t, election, true, 2*time.Second)
+	WaitForLeader(t, election, true, 2*time.Second)
 	assert.True(t, election.IsLeader(), "Should become leader")
 	assert.NotEmpty(t, election.Token(), "Should have a token")
 	assert.Equal(t, "instance-1", election.LeaderID(), "Leader ID should match")
 
 	// Wait for OnPromote callback
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return promoteCount > 0
@@ -243,7 +243,7 @@ func TestRealNATS_MultipleCandidates(t *testing.T) {
 	defer func() { _ = election3.Stop() }()
 
 	// Wait for one to become leader
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election1.IsLeader() || election2.IsLeader() || election3.IsLeader()
 	}, 3*time.Second, "one election to become leader")
 
@@ -275,7 +275,7 @@ func TestRealNATS_MultipleCandidates(t *testing.T) {
 	callbacks[leaderID].mu.Unlock()
 
 	// Verify followers know the leader and watchers are running
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election1.LeaderID() == leaderID &&
 			election2.LeaderID() == leaderID &&
 			election3.LeaderID() == leaderID
@@ -327,7 +327,7 @@ func TestRealNATS_MultipleCandidates(t *testing.T) {
 
 	// Wait for NATS to propagate the deletion and verify it's gone
 	// This confirms DeleteKey worked
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		_, err := kv.Get("test-group")
 		return err != nil // Key should not exist (error means deleted)
 	}, 2*time.Second, "key to be deleted")
@@ -335,7 +335,7 @@ func TestRealNATS_MultipleCandidates(t *testing.T) {
 	// Wait for new leader to be elected
 	// The periodic check in watchLoop runs every 500ms, so we need to wait at least that long
 	// Plus jitter (up to 100ms) + backoff + acquisition time
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		leaderCount := 0
 		for _, follower := range followerElections {
 			if follower.IsLeader() {
@@ -447,7 +447,7 @@ func TestRealNATS_LeaderTakeover(t *testing.T) {
 	defer func() { _ = election1.Stop() }()
 
 	// Wait for election1 to become leader
-	waitForLeader(t, election1, true, 2*time.Second)
+	WaitForLeader(t, election1, true, 2*time.Second)
 	assert.True(t, election1.IsLeader(), "Election1 should be leader")
 
 	// Start second election (should be follower)
@@ -469,7 +469,7 @@ func TestRealNATS_LeaderTakeover(t *testing.T) {
 
 	// Wait for election2 to take over (with DeleteKey, should be faster)
 	// Real NATS watchers may take time to detect key deletion
-	waitForLeader(t, election2, true, 10*time.Second)
+	WaitForLeader(t, election2, true, 10*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after election1 stops")
 
 	// Verify callbacks
@@ -524,7 +524,7 @@ func TestRealNATS_HeartbeatMaintainsLeadership(t *testing.T) {
 	defer func() { _ = election.Stop() }()
 
 	// Wait to become leader
-	waitForLeader(t, election, true, 2*time.Second)
+	WaitForLeader(t, election, true, 2*time.Second)
 	assert.True(t, election.IsLeader(), "Should become leader")
 
 	initialToken := election.Token()
@@ -583,7 +583,7 @@ func TestRealNATS_TokenValidation(t *testing.T) {
 	defer func() { _ = election.Stop() }()
 
 	// Wait to become leader
-	waitForLeader(t, election, true, 2*time.Second)
+	WaitForLeader(t, election, true, 2*time.Second)
 	assert.True(t, election.IsLeader(), "Should become leader")
 
 	token := election.Token()

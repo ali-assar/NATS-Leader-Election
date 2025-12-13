@@ -86,13 +86,13 @@ func TestMetrics_IsLeader(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader())
 
 	// Should have recorded isLeader = 1
@@ -120,13 +120,13 @@ func TestMetrics_Transitions(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Should have recorded transition to LEADER
 	assert.GreaterOrEqual(t, len(mockMetrics.transitions), 1, "Should record state transition")
@@ -158,13 +158,13 @@ func TestMetrics_AcquireAttempts(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Should have recorded successful acquire attempt
 	assert.GreaterOrEqual(t, len(mockMetrics.acquireAttempts), 1, "Should record acquire attempt")
@@ -199,13 +199,13 @@ func TestMetrics_AcquireAttempts_Failure(t *testing.T) {
 	_, err = kv.Create("test-group", payload)
 	assert.NoError(t, err)
 
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, false, 1*time.Second)
+	WaitForLeader(t, election, false, 1*time.Second)
 
 	// Should have recorded failed acquire attempt
 	// Note: attemptAcquire() is called directly from Start(), not through attemptAcquireWithRetry
@@ -231,13 +231,13 @@ func TestMetrics_HeartbeatDuration(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Wait for at least one heartbeat
 	time.Sleep(150 * time.Millisecond)
@@ -265,13 +265,13 @@ func TestMetrics_HeartbeatDuration_Failure(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Get mock KV and make Update fail
 	js, err := nc.JetStream()
@@ -320,13 +320,13 @@ func TestMetrics_LeaderDuration(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Wait a bit to have some leader duration
 	time.Sleep(100 * time.Millisecond)
@@ -359,13 +359,13 @@ func TestMetrics_TokenValidationFailures(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Wait a bit to ensure validation loop has started
 	time.Sleep(50 * time.Millisecond)
@@ -387,7 +387,7 @@ func TestMetrics_TokenValidationFailures(t *testing.T) {
 	// Wait for validation loop to detect invalid token
 	// Validation interval is 200ms, wait a bit longer to ensure it runs
 	// We need to wait for the next validation cycle after the update
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return len(mockMetrics.tokenValidationFailures) > 0 || !election.IsLeader()
 	}, 600*time.Millisecond, "token validation failure to be recorded or leader demoted")
 
@@ -418,7 +418,7 @@ func TestMetrics_ConnectionStatus(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
@@ -444,13 +444,13 @@ func TestMetrics_NoMetrics(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader())
 
 	// Should work fine without metrics
@@ -470,13 +470,13 @@ func TestMetrics_Labels(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Check that labels are correct in transitions
 	assert.GreaterOrEqual(t, len(mockMetrics.transitions), 1)

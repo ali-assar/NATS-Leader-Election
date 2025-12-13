@@ -21,13 +21,13 @@ func TestValidateToken_Valid(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err, "Failed to create election")
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	assert.True(t, election.IsLeader(), "Instance should be leader")
 	defer func() { _ = election.Stop() }()
@@ -48,13 +48,13 @@ func TestValidateToken_Invalid_Mismatch(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err, "Failed to create election")
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Instance should be leader")
 
 	originalToken := election.Token()
@@ -108,13 +108,13 @@ func TestValidateToken_Invalid_DifferentLeader(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err, "Failed to create election")
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Instance should be leader")
 
 	originalToken := election.Token()
@@ -168,13 +168,13 @@ func TestValidateToken_Invalid_LeaderIDMismatch(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err, "Failed to create election")
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Instance should be leader")
 
 	originalToken := election.Token()
@@ -225,13 +225,13 @@ func TestValidateToken_Invalid_NoTokenInKV(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err, "Failed to create election")
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Instance should be leader")
 
 	originalToken := election.Token()
@@ -274,13 +274,13 @@ func TestValidationLoop_ValidToken(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Wait for at least one validation cycle to complete
@@ -311,7 +311,7 @@ func TestValidationLoop_InvalidToken(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	var demoteCalled bool
@@ -322,7 +322,7 @@ func TestValidationLoop_InvalidToken(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Get mock KV and update with different token (simulating another leader)
@@ -348,13 +348,13 @@ func TestValidationLoop_InvalidToken(t *testing.T) {
 
 	// Wait for validation loop to run and detect invalid token
 	// Validation interval is 200ms, wait a bit longer to ensure it runs
-	waitForLeader(t, election, false, 500*time.Millisecond)
+	WaitForLeader(t, election, false, 500*time.Millisecond)
 
 	// Should be demoted
 	assert.False(t, election.IsLeader(), "Should be demoted after token becomes invalid")
 
 	// Wait for onDemote callback
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return demoteCalled
 	}, 500*time.Millisecond, "OnDemote callback")
 
@@ -375,13 +375,13 @@ func TestValidationLoop_Timeout(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Get mock KV and make Get() operation slow (simulating timeout)
@@ -420,7 +420,7 @@ func TestValidationLoop_Timeout(t *testing.T) {
 	// After 2 consecutive failures, it should demote
 
 	// Wait for demotion (should happen after 2 consecutive timeouts)
-	waitForLeader(t, election, false, 6*time.Second)
+	WaitForLeader(t, election, false, 6*time.Second)
 
 	// Should be demoted after timeout failures
 	assert.False(t, election.IsLeader(), "Should be demoted after validation timeouts")

@@ -10,32 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Helper function to wait for a condition with timeout
-func waitForCondition(t *testing.T, condition func() bool, timeout time.Duration, msg string) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond) // Small polling interval
-	}
-	t.Fatalf("Timeout waiting for condition: %s", msg)
-}
-
-// Helper function to wait for attemptAcquire to complete
-func waitForLeader(t *testing.T, election Election, expectLeader bool, timeout time.Duration) {
-	waitForCondition(t, func() bool {
-		return election.IsLeader() == expectLeader
-	}, timeout, "leader state")
-}
-
-// Helper function to wait for heartbeat to occur
-func waitForHeartbeat(t *testing.T, election Election, initialHeartbeat time.Time, timeout time.Duration) {
-	waitForCondition(t, func() bool {
-		status := election.Status()
-		return status.LastHeartbeat.After(initialHeartbeat)
-	}, timeout, "heartbeat")
-}
+// Test helpers are now in test_helpers.go
 
 // TestHeartbeatLoop_Success verifies that the heartbeat loop successfully updates
 // the leadership key periodically, keeping the TTL alive and maintaining leadership.
@@ -43,7 +18,7 @@ func TestHeartbeatLoop_Success(t *testing.T) {
 	heartbeatInterval := 100 * time.Millisecond
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -57,7 +32,7 @@ func TestHeartbeatLoop_Success(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for attemptAcquire to complete and become leader
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Verify we became leader
 	assert.True(t, election.IsLeader(), "Expected to be leader")
@@ -70,7 +45,7 @@ func TestHeartbeatLoop_Success(t *testing.T) {
 	initialHeartbeat := initialStatus.LastHeartbeat
 
 	// Wait for heartbeat to occur (wait up to 2x interval)
-	waitForHeartbeat(t, election, initialHeartbeat, heartbeatInterval*2)
+	WaitForHeartbeat(t, election, initialHeartbeat, heartbeatInterval*2)
 
 	// Verify heartbeat occurred successfully
 	newStatus := election.Status()
@@ -103,7 +78,7 @@ func TestRevisionMismatch(t *testing.T) {
 	heartbeatInterval := 100 * time.Millisecond
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -123,7 +98,7 @@ func TestRevisionMismatch(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for attemptAcquire to complete and become leader
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Verify we became leader
 	assert.True(t, election.IsLeader(), "Expected to be leader")
@@ -145,7 +120,7 @@ func TestRevisionMismatch(t *testing.T) {
 
 	// Wait for heartbeat to fire - it will try to update with old revision
 	// and should fail with "revision mismatch"
-	waitForLeader(t, election, false, heartbeatInterval*2)
+	WaitForLeader(t, election, false, heartbeatInterval*2)
 
 	// Verify demotion happened (revision mismatch is a permanent error)
 	assert.False(t, election.IsLeader(), "Expected to be demoted after revision mismatch")
@@ -170,7 +145,7 @@ func TestTransientError(t *testing.T) {
 	heartbeatInterval := 100 * time.Millisecond
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -184,7 +159,7 @@ func TestTransientError(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for attemptAcquire to complete and become leader
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Verify we became leader
 	assert.True(t, election.IsLeader(), "Expected to be leader")
@@ -231,7 +206,7 @@ func TestTransientError(t *testing.T) {
 		"Expected lastHeartbeat to remain unchanged after transient error")
 
 	// Wait for second heartbeat - it should succeed now (UpdateFunc cleared)
-	waitForHeartbeat(t, election, initialHeartbeat, heartbeatInterval*2)
+	WaitForHeartbeat(t, election, initialHeartbeat, heartbeatInterval*2)
 
 	// Verify after recovery: still leader, state updated
 	assert.True(t, election.IsLeader(), "Expected to still be leader after recovery")
@@ -260,7 +235,7 @@ func TestMultipleErrors(t *testing.T) {
 	heartbeatInterval := 100 * time.Millisecond
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -280,7 +255,7 @@ func TestMultipleErrors(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for attemptAcquire to complete and become leader
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Verify we became leader
 	assert.True(t, election.IsLeader(), "Expected to be leader")
@@ -302,7 +277,7 @@ func TestMultipleErrors(t *testing.T) {
 	}
 
 	// Wait for 3 heartbeats (each will fail) - wait for demotion
-	waitForLeader(t, election, false, heartbeatInterval*4)
+	WaitForLeader(t, election, false, heartbeatInterval*4)
 
 	// Verify demotion occurred after maxFailures threshold
 	assert.False(t, election.IsLeader(), "Expected to be demoted after 3 consecutive failures")
@@ -328,7 +303,7 @@ func TestTimeoutError(t *testing.T) {
 	heartbeatInterval := 100 * time.Millisecond
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -342,7 +317,7 @@ func TestTimeoutError(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Wait for attemptAcquire to complete and become leader
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	// Verify we became leader
 	assert.True(t, election.IsLeader(), "Expected to be leader")
@@ -414,7 +389,7 @@ func TestTimeoutError(t *testing.T) {
 	}
 
 	// Wait for next heartbeat - it should succeed now (UpdateFunc cleared)
-	waitForHeartbeat(t, election, initialHeartbeat, heartbeatInterval*2)
+	WaitForHeartbeat(t, election, initialHeartbeat, heartbeatInterval*2)
 
 	// Verify recovery: next heartbeat should succeed
 	statusAfterRecovery := election.Status()

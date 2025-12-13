@@ -27,13 +27,13 @@ func TestStopWithContext_KeyDeletion(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Get mock KV to verify key exists
@@ -73,7 +73,7 @@ func TestStopWithContext_WaitForDemote(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	var demoteCalled atomic.Bool
@@ -88,7 +88,7 @@ func TestStopWithContext_WaitForDemote(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Stop with WaitForDemote
@@ -119,7 +119,7 @@ func TestStopWithContext_Timeout(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	var demoteBlocked atomic.Bool
@@ -133,7 +133,7 @@ func TestStopWithContext_Timeout(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Stop with short timeout
@@ -169,13 +169,13 @@ func TestStopWithContext_ContextCancellation(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Create context and cancel it immediately
@@ -202,7 +202,7 @@ func TestStopWithContext_NoOptions(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	var demoteCalled atomic.Bool
@@ -213,7 +213,7 @@ func TestStopWithContext_NoOptions(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Get mock KV to verify key still exists
@@ -259,7 +259,7 @@ func TestStopWithContext_NotLeader(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	var demoteCalled atomic.Bool
@@ -311,7 +311,7 @@ func TestStopWithContext_OnPromoteContextCancellation(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	var promoteCtxCancelled atomic.Bool
@@ -325,7 +325,7 @@ func TestStopWithContext_OnPromoteContextCancellation(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Stop - this should cancel the OnPromote context
@@ -352,7 +352,7 @@ func TestStopWithContext_AlreadyStopped(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())

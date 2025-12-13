@@ -461,7 +461,7 @@ This is your step-by-step learning guide. Work through each task in order, under
   - Fix all warnings and errors
   - **Learning**: Code quality tools, best practices
 
-- [ ] **18.2** Review code for improvements
+- [x] **18.2** Review code for improvements
   - Look for code smells
   - Refactor if needed
   - Consolidate test helpers (`waitForCondition`, `waitForLeader`, `waitForHeartbeat`) into shared test helper file

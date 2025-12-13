@@ -22,7 +22,7 @@ func TestDisconnect_GracePeriod(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	kvElection, ok := election.(*kvElection)
@@ -36,7 +36,7 @@ func TestDisconnect_GracePeriod(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Create disconnect handler manually for testing
@@ -50,7 +50,7 @@ func TestDisconnect_GracePeriod(t *testing.T) {
 
 	// Test 2: Demotion after grace period expires
 	// Wait for grace period + small buffer
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return !election.IsLeader()
 	}, 500*time.Millisecond, "Leader should be demoted after grace period")
 
@@ -73,7 +73,7 @@ func TestDisconnect_NoDemotionIfReconnected(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	kvElection, ok := election.(*kvElection)
@@ -82,7 +82,7 @@ func TestDisconnect_NoDemotionIfReconnected(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 
 	handler := &disconnectHandler{
 		election: kvElection,
@@ -118,13 +118,13 @@ func TestReconnect_Verification(t *testing.T) {
 	}
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	kvElection, ok := election.(*kvElection)

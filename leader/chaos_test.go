@@ -58,7 +58,7 @@ func TestChaos_NATSServerRestart(t *testing.T) {
 	defer func() { _ = election.Stop() }()
 
 	// Wait to become leader
-	waitForLeader(t, election, true, 2*time.Second)
+	WaitForLeader(t, election, true, 2*time.Second)
 	assert.True(t, election.IsLeader(), "Should become leader")
 
 	// Shutdown NATS server
@@ -108,7 +108,7 @@ func TestChaos_NATSServerRestart(t *testing.T) {
 	defer func() { _ = election2.Stop() }()
 
 	// Should be able to become leader again
-	waitForLeader(t, election2, true, 3*time.Second)
+	WaitForLeader(t, election2, true, 3*time.Second)
 	assert.True(t, election2.IsLeader(), "Should become leader after reconnection")
 }
 
@@ -194,7 +194,7 @@ func TestChaos_NetworkPartition(t *testing.T) {
 	initialTiming := TimingConfig{
 		HeartbeatInterval: cfg1.HeartbeatInterval,
 	}
-	waitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
+	WaitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader before starting election2")
 
 	// Now start election2 (it will become a follower since election1 is already leader)
@@ -214,7 +214,7 @@ func TestChaos_NetworkPartition(t *testing.T) {
 	sleepDuration, waitTimeout := partitionTiming.CalculateNetworkPartitionTimeout()
 	time.Sleep(sleepDuration)
 	// With real NATS, watchers may take time to detect the key deletion or TTL expiration
-	waitForLeader(t, election2, true, waitTimeout)
+	WaitForLeader(t, election2, true, waitTimeout)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after partition")
 
 	mu.Lock()
@@ -295,7 +295,7 @@ func TestChaos_ProcessKill(t *testing.T) {
 	initialTiming := TimingConfig{
 		HeartbeatInterval: cfg1.HeartbeatInterval,
 	}
-	waitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
+	WaitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader before starting election2")
 
 	// Now start election2 (it will become a follower since election1 is already leader)
@@ -319,7 +319,7 @@ func TestChaos_ProcessKill(t *testing.T) {
 	}
 	sleepDuration, waitTimeout := ttlTiming.CalculateTTLExpirationTimeout()
 	time.Sleep(sleepDuration)
-	waitForLeader(t, election2, true, waitTimeout)
+	WaitForLeader(t, election2, true, waitTimeout)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after election1 dies")
 
 	mu.Lock()
@@ -400,7 +400,7 @@ func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
 	initialTiming := TimingConfig{
 		HeartbeatInterval: cfg1.HeartbeatInterval,
 	}
-	waitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
+	WaitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader before starting election2")
 
 	// Now start election2 (it will become a follower since election1 is already leader)
@@ -421,7 +421,7 @@ func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
 	sleepDuration, waitTimeout := deleteTiming.CalculateImmediateDeletionTimeout()
 	time.Sleep(sleepDuration)
 	// With DeleteKey, the key is deleted immediately, but watchers may take time to detect
-	waitForLeader(t, election2, true, waitTimeout)
+	WaitForLeader(t, election2, true, waitTimeout)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader quickly after key deletion")
 
 	mu.Lock()
@@ -511,7 +511,7 @@ func TestChaos_PriorityTakeover(t *testing.T) {
 	initialTiming := TimingConfig{
 		HeartbeatInterval: cfg1.HeartbeatInterval,
 	}
-	waitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
+	WaitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader")
 
 	// Start election2 (higher priority)
@@ -521,13 +521,13 @@ func TestChaos_PriorityTakeover(t *testing.T) {
 
 	// Wait for election2 to take over
 	// Priority takeover should be fast (no need to wait for TTL)
-	waitForLeader(t, election2, true, 3*time.Second)
+	WaitForLeader(t, election2, true, 3*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should take over leadership")
 
 	// Wait for election1 to detect the takeover
 	// Leaders don't have watchers, so they detect takeover on next heartbeat failure
 	// Wait for at least one heartbeat interval + buffer for heartbeat to fail
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return !election1.IsLeader()
 	}, cfg1.HeartbeatInterval*2+500*time.Millisecond, "election1 to be demoted")
 	assert.False(t, election1.IsLeader(), "Election1 should be demoted")
@@ -605,7 +605,7 @@ func TestChaos_PriorityTakeoverWithNetworkPartition(t *testing.T) {
 	initialTiming := TimingConfig{
 		HeartbeatInterval: cfg1.HeartbeatInterval,
 	}
-	waitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
+	WaitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader")
 
 	// Start election2 (higher priority, but as follower initially)
@@ -621,7 +621,7 @@ func TestChaos_PriorityTakeoverWithNetworkPartition(t *testing.T) {
 
 	// Election2 should take over (either via priority takeover or after TTL expiration)
 	// With priority takeover enabled, it should happen faster
-	waitForLeader(t, election2, true, 5*time.Second)
+	WaitForLeader(t, election2, true, 5*time.Second)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader")
 }
 
@@ -693,7 +693,7 @@ func TestChaos_ThunderingHerd(t *testing.T) {
 	}
 
 	// Wait for one to become leader
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		for _, election := range elections {
 			if election.IsLeader() {
 				return true

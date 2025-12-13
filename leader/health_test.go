@@ -58,13 +58,13 @@ func TestHealthCheck_HealthyLeaderContinues(t *testing.T) {
 	cfg.MaxConsecutiveFailures = 3
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Wait for multiple heartbeat cycles
@@ -94,7 +94,7 @@ func TestHealthCheck_UnhealthyLeaderDemotes(t *testing.T) {
 	cfg.MaxConsecutiveFailures = 3
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	var demoteCalled bool
@@ -105,18 +105,18 @@ func TestHealthCheck_UnhealthyLeaderDemotes(t *testing.T) {
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Wait for health checks to run (3+ heartbeat intervals)
 	// With 200ms heartbeat and 3 failures needed, wait at least 600ms
-	waitForLeader(t, election, false, 1*time.Second)
+	WaitForLeader(t, election, false, 1*time.Second)
 
 	// Should be demoted
 	assert.False(t, election.IsLeader(), "Should be demoted after health check failures")
 
 	// Wait for onDemote callback
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return demoteCalled
 	}, 500*time.Millisecond, "OnDemote callback")
 
@@ -141,13 +141,13 @@ func TestHealthCheck_IntermittentFailures(t *testing.T) {
 	cfg.MaxConsecutiveFailures = 3
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Simulate intermittent failures
@@ -194,18 +194,18 @@ func TestHealthCheck_Timeout(t *testing.T) {
 	cfg.MaxConsecutiveFailures = 3
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Wait for health checks to run (should timeout after 100ms)
 	// With 3 failures needed and timeout treated as unhealthy, wait at least 600ms
-	waitForLeader(t, election, false, 1*time.Second)
+	WaitForLeader(t, election, false, 1*time.Second)
 
 	// Should be demoted (timeout is treated as unhealthy)
 	assert.False(t, election.IsLeader(), "Should be demoted after health check timeouts")
@@ -227,13 +227,13 @@ func TestHealthCheck_NoHealthChecker(t *testing.T) {
 	cfg.HealthChecker = nil
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Wait for multiple heartbeat cycles
@@ -260,13 +260,13 @@ func TestHealthCheck_CustomThreshold(t *testing.T) {
 	cfg.MaxConsecutiveFailures = 5 // Custom threshold
 
 	nc := natsmock.NewMockConn()
-	election, err := NewElection(newMockConnAdapter(nc), cfg)
+	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
 	err = election.Start(context.Background())
 	assert.NoError(t, err)
 
-	waitForLeader(t, election, true, 1*time.Second)
+	WaitForLeader(t, election, true, 1*time.Second)
 	assert.True(t, election.IsLeader(), "Should be leader")
 
 	// Wait for 4 heartbeat cycles (should not demote yet)
@@ -279,7 +279,7 @@ func TestHealthCheck_CustomThreshold(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 
 	// Should be demoted now
-	waitForLeader(t, election, false, 500*time.Millisecond)
+	WaitForLeader(t, election, false, 500*time.Millisecond)
 	assert.False(t, election.IsLeader(), "Should be demoted after 5 failures")
 
 	defer func() { _ = election.Stop() }()

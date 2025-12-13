@@ -57,7 +57,7 @@ func TestKeyDeletedEvent(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, entry2, "Key should still exist before election starts")
 
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -83,7 +83,7 @@ func TestKeyDeletedEvent(t *testing.T) {
 		t.Fatal("Timeout waiting for attemptAcquire to complete")
 	}
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		status := election.Status()
 		return status.State == StateFollower
 	}, 1*time.Second, "election to become follower")
@@ -105,7 +105,7 @@ func TestKeyDeletedEvent(t *testing.T) {
 	}
 	updatesChan <- initialEntry
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.LeaderID() == "other-instance"
 	}, 500*time.Millisecond, "watcher to process initial entry")
 
@@ -136,7 +136,7 @@ func TestKeyDeletedEvent(t *testing.T) {
 		t.Fatal("Timeout waiting for re-election attempt to complete")
 	}
 
-	waitForLeader(t, election, true, 500*time.Millisecond)
+	WaitForLeader(t, election, true, 500*time.Millisecond)
 
 	assert.True(t, election.IsLeader(), "Expected to become leader after key deletion")
 	assert.Equal(t, "instance-1", election.LeaderID(), "Should be our instance ID")
@@ -170,7 +170,7 @@ func TestEmptyValueEvent(t *testing.T) {
 		return customWatcher, nil
 	}
 
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -196,7 +196,7 @@ func TestEmptyValueEvent(t *testing.T) {
 		t.Fatal("Timeout waiting for attemptAcquire to complete")
 	}
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.Status().State == StateFollower
 	}, 1*time.Second, "election to become follower")
 
@@ -233,7 +233,7 @@ func TestEmptyValueEvent(t *testing.T) {
 		t.Fatal("Timeout waiting for re-election attempt to complete")
 	}
 
-	waitForLeader(t, election, true, 500*time.Millisecond)
+	WaitForLeader(t, election, true, 500*time.Millisecond)
 	assert.True(t, election.IsLeader(), "Expected to become leader after empty value event")
 }
 
@@ -264,7 +264,7 @@ func TestLeaderChangeEvent(t *testing.T) {
 		return customWatcher, nil
 	}
 
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -290,7 +290,7 @@ func TestLeaderChangeEvent(t *testing.T) {
 		t.Fatal("Timeout waiting for attemptAcquire to complete")
 	}
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.Status().State == StateFollower
 	}, 1*time.Second, "election to become follower")
 
@@ -310,7 +310,7 @@ func TestLeaderChangeEvent(t *testing.T) {
 	updatesChan <- initialEntry
 
 	// Wait for watcher to process
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.LeaderID() == "leader-1"
 	}, 500*time.Millisecond, "watcher to process initial entry")
 
@@ -334,7 +334,7 @@ func TestLeaderChangeEvent(t *testing.T) {
 	updatesChan <- newEntry
 
 	// Wait for watcher to process leader change
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.LeaderID() == "leader-2"
 	}, 500*time.Millisecond, "watcher to process leader change")
 
@@ -371,7 +371,7 @@ func TestHeartbeatEvent(t *testing.T) {
 		return customWatcher, nil
 	}
 
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -397,7 +397,7 @@ func TestHeartbeatEvent(t *testing.T) {
 		t.Fatal("Timeout waiting for attemptAcquire to complete")
 	}
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.Status().State == StateFollower
 	}, 1*time.Second, "election to become follower")
 
@@ -417,7 +417,7 @@ func TestHeartbeatEvent(t *testing.T) {
 	updatesChan <- initialEntry
 
 	// Wait for watcher to process
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.LeaderID() == "leader-1"
 	}, 500*time.Millisecond, "watcher to process initial entry")
 
@@ -439,7 +439,7 @@ func TestHeartbeatEvent(t *testing.T) {
 	updatesChan <- heartbeatEntry
 
 	// Wait for revision update
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.Status().Revision == uint64(2)
 	}, 500*time.Millisecond, "watcher to process heartbeat")
 
@@ -480,7 +480,7 @@ func TestInvalidJSONEvent(t *testing.T) {
 		return customWatcher, nil
 	}
 
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -506,7 +506,7 @@ func TestInvalidJSONEvent(t *testing.T) {
 		t.Fatal("Timeout waiting for attemptAcquire to complete")
 	}
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.Status().State == StateFollower
 	}, 1*time.Second, "election to become follower")
 
@@ -556,7 +556,7 @@ func TestMissingIDFieldEvent(t *testing.T) {
 		return customWatcher, nil
 	}
 
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -582,7 +582,7 @@ func TestMissingIDFieldEvent(t *testing.T) {
 		t.Fatal("Timeout waiting for attemptAcquire to complete")
 	}
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.Status().State == StateFollower
 	}, 1*time.Second, "election to become follower")
 
@@ -632,7 +632,7 @@ func TestWatcherStopsOnContextCancel(t *testing.T) {
 		return customWatcher, nil
 	}
 
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -658,7 +658,7 @@ func TestWatcherStopsOnContextCancel(t *testing.T) {
 		t.Fatal("Timeout waiting for attemptAcquire to complete")
 	}
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.Status().State == StateFollower
 	}, 1*time.Second, "election to become follower")
 
@@ -719,7 +719,7 @@ func TestWatcherStopsOnChannelClose(t *testing.T) {
 		return customWatcher, nil
 	}
 
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -745,7 +745,7 @@ func TestWatcherStopsOnChannelClose(t *testing.T) {
 		t.Fatal("Timeout waiting for attemptAcquire to complete")
 	}
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.Status().State == StateFollower
 	}, 1*time.Second, "election to become follower")
 
@@ -790,7 +790,7 @@ func TestJitterAndBackoffBehavior(t *testing.T) {
 		return customWatcher, nil
 	}
 
-	election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+	election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 		Bucket:            "leaders",
 		Group:             "test-group",
 		InstanceID:        "instance-1",
@@ -816,7 +816,7 @@ func TestJitterAndBackoffBehavior(t *testing.T) {
 		t.Fatal("Timeout waiting for attemptAcquire to complete")
 	}
 
-	waitForCondition(t, func() bool {
+	WaitForCondition(t, func() bool {
 		return election.Status().State == StateFollower
 	}, 1*time.Second, "election to become follower")
 
@@ -894,7 +894,7 @@ func TestJitterAndBackoffBehavior(t *testing.T) {
 	}
 
 	// Should eventually become leader
-	waitForLeader(t, election, true, 500*time.Millisecond)
+	WaitForLeader(t, election, true, 500*time.Millisecond)
 	assert.True(t, election.IsLeader(), "Expected to become leader after retry")
 	assert.GreaterOrEqual(t, attemptCount, 2, "Should have made at least 2 attempts")
 }
@@ -944,7 +944,7 @@ func TestMultipleFollowersCompeting(t *testing.T) {
 			}
 		}
 
-		election, err := NewElection(newMockConnAdapter(nc), ElectionConfig{
+		election, err := NewElection(NewMockConnAdapter(nc), ElectionConfig{
 			Bucket:            "leaders",
 			Group:             "test-group",
 			InstanceID:        fmt.Sprintf("instance-%d", i+1),
@@ -982,7 +982,7 @@ func TestMultipleFollowersCompeting(t *testing.T) {
 
 	// Wait for all to become followers
 	for i := 0; i < numFollowers; i++ {
-		waitForCondition(t, func() bool {
+		WaitForCondition(t, func() bool {
 			return elections[i].Status().State == StateFollower
 		}, 2*time.Second, fmt.Sprintf("election %d to become follower", i))
 	}
