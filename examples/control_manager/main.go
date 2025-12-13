@@ -99,8 +99,22 @@ func main() {
 	fmt.Printf("[ControlManager] Starting with instance ID: %s\n", instanceID)
 	fmt.Printf("[ControlManager] Connecting to NATS at: %s\n", natsURL)
 
-	// Connect to NATS
-	nc, err := nats.Connect(natsURL)
+	// Connect to NATS with reconnection handling
+	nc, err := nats.Connect(natsURL,
+		nats.MaxReconnects(-1), // Infinite reconnects
+		nats.ReconnectWait(2*time.Second),
+		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
+			if err != nil {
+				log.Printf("[ControlManager] ⚠️  NATS disconnected: %v", err)
+			}
+		}),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			log.Printf("[ControlManager] ✓ NATS reconnected to %s", nc.ConnectedUrl())
+		}),
+		nats.ClosedHandler(func(nc *nats.Conn) {
+			log.Printf("[ControlManager] ⚠️  NATS connection closed")
+		}),
+	)
 	if err != nil {
 		log.Fatalf("[ControlManager] Failed to connect to NATS: %v", err)
 	}
