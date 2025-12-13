@@ -349,7 +349,123 @@ func NewElectionWithConn(nc *nats.Conn, cfg ElectionConfig) (Election, error)
 
 ---
 
-## Usage example
+## Quick Start
+
+### Prerequisites
+
+1. **NATS Server** with JetStream enabled
+   ```bash
+   # Using Docker
+   docker run -d -p 4222:4222 -p 8222:8222 nats:latest -js
+   
+   # Or install locally
+   # https://docs.nats.io/running-a-nats-service/introduction/installation
+   ```
+
+2. **Go 1.19+**
+
+3. **Install the library**
+   ```bash
+   go get github.com/ali-assar/NATS-Leader-Election/leader
+   ```
+
+### Basic Example
+
+```go
+package main
+
+import (
+    "context"
+    "errors"
+    "log"
+    "time"
+    
+    "github.com/nats-io/nats.go"
+    "github.com/ali-assar/NATS-Leader-Election/leader"
+)
+
+func main() {
+    // Connect to NATS
+    nc, err := nats.Connect(nats.DefaultURL)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer nc.Close()
+
+    // Create JetStream context and KV bucket
+    js, err := nc.JetStream()
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Create KV bucket (only needed once, or use existing bucket)
+    _, err = js.CreateKeyValue(&nats.KeyValueConfig{
+        Bucket: "leaders",
+        TTL:    10 * time.Second,
+    })
+    if err != nil && !errors.Is(err, nats.ErrBucketExists) {
+        log.Fatal(err)
+    }
+
+    // Configure election
+    cfg := leader.ElectionConfig{
+        Bucket:            "leaders",
+        Group:             "my-app",
+        InstanceID:        "instance-1", // Unique per instance
+        TTL:               10 * time.Second,
+        HeartbeatInterval: 1 * time.Second,
+    }
+
+    // Create election instance
+    election, err := leader.NewElectionWithConn(nc, cfg)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    // Register callbacks
+    election.OnPromote(func(ctx context.Context, token string) {
+        log.Printf("✅ Became leader! Token: %s", token)
+        // Start leader tasks here
+    })
+
+    election.OnDemote(func() {
+        log.Println("❌ Lost leadership")
+        // Stop leader tasks here
+    })
+
+    // Start election
+    ctx := context.Background()
+    if err := election.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+    defer election.Stop()
+
+    // Run until interrupted
+    log.Println("Election started. Press Ctrl+C to stop.")
+    <-ctx.Done()
+}
+```
+
+### Running Multiple Instances
+
+Run the same program on multiple machines/containers with different `InstanceID` values:
+
+```bash
+# Instance 1
+INSTANCE_ID=instance-1 go run main.go
+
+# Instance 2
+INSTANCE_ID=instance-2 go run main.go
+
+# Instance 3
+INSTANCE_ID=instance-3 go run main.go
+```
+
+Only one instance will be leader at a time. If the leader stops, another instance will automatically take over.
+
+---
+
+## Usage Examples
 
 ```go
 import (
@@ -582,6 +698,105 @@ Choose a permissive license (e.g., MIT or Apache 2.0) and include `LICENSE` in t
 - **Solution**: Increase TTL, decrease heartbeat interval, ensure `TTL >= HeartbeatInterval * 3`, check network connectivity
 
 **Issue: Stale leader continues acting**
+- **Cause**: Leader lost connectivity but didn't detect it, or token validation is disabled
+- **Solution**:
+  - Enable token validation: set `ValidationInterval` (e.g., 5 seconds)
+  - Use `ValidateTokenOrDemote()` before critical operations
+  - Enable connection monitoring (automatic with NATS connection)
+  - Check connection status in metrics/logs
+
+**Issue: Election never starts / "bucket not found"**
+- **Cause**: KV bucket doesn't exist
+- **Solution**:
+  - Create the bucket before starting election:
+    ```go
+    js.CreateKeyValue(&nats.KeyValueConfig{
+        Bucket: "leaders",
+        TTL:    10 * time.Second,
+    })
+    ```
+  - Or use an existing bucket name
+
+**Issue: "invalid config" error**
+- **Cause**: Configuration validation failed
+- **Solution**:
+  - Ensure `TTL >= HeartbeatInterval * 3`
+  - Ensure `InstanceID` is not empty
+  - Ensure `Bucket` and `Group` are not empty
+  - If using priority takeover, ensure `Priority > 0` when `AllowPriorityTakeover` is true
+
+**Issue: Leader doesn't demote on health check failure**
+- **Cause**: Health checker not configured or failure threshold not reached
+- **Solution**:
+  - Implement and set `HealthChecker` in config
+  - Ensure `MaxConsecutiveFailures` is set appropriately (default: 3)
+  - Check health checker logs to verify it's being called
+
+**Issue: High CPU usage**
+- **Cause**: Heartbeat interval too short or too many elections
+- **Solution**:
+  - Increase heartbeat interval (e.g., 500ms → 1s)
+  - Reduce number of concurrent elections
+  - Check metrics for operation frequency
+
+**Issue: Slow failover**
+- **Cause**: TTL too long or grace period too long
+- **Solution**:
+  - Decrease TTL (e.g., 30s → 10s)
+  - Decrease `DisconnectGracePeriod`
+  - Use `DeleteKey: true` in `StopWithContext` for graceful shutdowns
+
+**Issue: Connection errors / "connection lost"**
+- **Cause**: NATS server unreachable or network issues
+- **Solution**:
+  - Check NATS server is running and accessible
+  - Verify network connectivity
+  - Check NATS connection status
+  - Review connection monitoring logs
+  - Consider using NATS connection pooling for multiple elections
+
+### Debugging Tips
+
+1. **Enable structured logging**:
+   ```go
+   logger, _ := zap.NewDevelopment()
+   cfg.Logger = logger
+   ```
+
+2. **Enable Prometheus metrics**:
+   ```go
+   metrics := leader.NewPrometheusMetrics(prometheus.DefaultRegisterer)
+   cfg.Metrics = metrics
+   ```
+
+3. **Check election status**:
+   ```go
+   status := election.Status()
+   log.Printf("State: %s, IsLeader: %v, LeaderID: %s",
+       status.State, status.IsLeader, status.LeaderID)
+   ```
+
+4. **Monitor NATS KV directly**:
+   ```bash
+   # Using NATS CLI
+   nats kv get leaders my-app
+   nats kv watch leaders my-app
+   ```
+
+5. **Check for error patterns**:
+   - Review logs for error patterns
+   - Monitor metrics for failure rates
+   - Check connection status metrics
+
+### Getting Help
+
+- Check the [examples](examples/) directory for complete working examples
+- Review the [API documentation](https://pkg.go.dev/github.com/ali-assar/NATS-Leader-Election/leader)
+- Open an issue on GitHub with:
+  - Configuration details (without secrets)
+  - Error messages and logs
+  - NATS server version
+  - Go version
 - **Cause**: Fencing token not being validated before operations
 - **Solution**: Use `ValidateToken()` or `ValidateTokenOrDemote()` before critical operations, or enable periodic validation with `ValidationInterval > 0`
 

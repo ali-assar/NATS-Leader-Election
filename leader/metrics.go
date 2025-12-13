@@ -36,7 +36,26 @@ type prometheusMetrics struct {
 }
 
 // NewPrometheusMetrics creates a new Prometheus metrics implementation.
-// If registry is nil, returns a no-op implementation.
+// If registry is nil, returns a no-op implementation that discards all metrics.
+//
+// The returned Metrics instance records the following metrics:
+//   - election_is_leader (gauge): 1 if leader, 0 otherwise
+//   - election_connection_status (gauge): 1 if connected, 0 otherwise
+//   - election_transitions_total (counter): State transitions
+//   - election_failures_total (counter): Election failures
+//   - election_acquire_attempts_total (counter): Acquisition attempts
+//   - election_token_validation_failures_total (counter): Token validation failures
+//   - election_heartbeat_duration_seconds (histogram): Heartbeat duration
+//   - election_leader_duration_seconds (histogram): Leadership duration
+//
+// Example:
+//
+//	registry := prometheus.NewRegistry()
+//	metrics := NewPrometheusMetrics(registry)
+//	cfg := ElectionConfig{
+//	    // ... other fields ...
+//	    Metrics: metrics,
+//	}
 func NewPrometheusMetrics(registry prometheus.Registerer) Metrics {
 	if registry == nil {
 		return &noOpMetrics{}

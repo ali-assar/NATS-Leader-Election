@@ -397,19 +397,19 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 15: Create Example Applications
 
-- [ ] **15.1** Update `cmd/demo/main.go`
+- [x] **15.1** Update `cmd/demo/main.go`
   - Create simple leader election demo
   - Show basic usage
   - Add comments explaining each step
   - **Learning**: Example code, documentation through code
 
-- [ ] **15.2** Create `examples/control-manager/`
+- [x] **15.2** Create `examples/control-manager/`
   - Create a simple control manager example
   - Show leader-specific tasks
   - Show graceful shutdown
   - **Learning**: Real-world usage patterns
 
-- [ ] **15.3** Create `examples/multi-role/`
+- [x] **15.3** Create `examples/multi-role/`
   - Show multiple role elections
   - Show role-specific callbacks
   - **Learning**: Multi-role patterns, complex scenarios
@@ -438,17 +438,17 @@ This is your step-by-step learning guide. Work through each task in order, under
 
 ### Step 17: Documentation
 
-- [ ] **17.1** Add Go doc comments
+- [x] **17.1** Add Go doc comments
   - Document all public types and functions
   - Add usage examples in comments
   - **Learning**: Documentation best practices, Go doc
 
-- [ ] **17.2** Create API documentation
+- [x] **17.2** Create API documentation
   - Generate godoc
   - Review and improve documentation
   - **Learning**: API documentation, user perspective
 
-- [ ] **17.3** Update README with examples
+- [x] **17.3** Update README with examples
   - Add quickstart section
   - Add more usage examples
   - Add troubleshooting section

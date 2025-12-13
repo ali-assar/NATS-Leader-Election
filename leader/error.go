@@ -8,36 +8,86 @@ import (
 	"time"
 )
 
+// Package-level errors that can be returned by the library.
 var (
-	ErrNotLeader      = errors.New("not leader")
+	// ErrNotLeader is returned when an operation requires leadership
+	// but the instance is not currently the leader.
+	ErrNotLeader = errors.New("not leader")
+
+	// ErrAlreadyStarted is returned when attempting to start an election
+	// that is already started.
 	ErrAlreadyStarted = errors.New("already started")
+
+	// ErrAlreadyStopped is returned when attempting to stop an election
+	// that is already stopped.
 	ErrAlreadyStopped = errors.New("already stopped")
 
-	ErrElectionFailed        = errors.New("election failed")
-	ErrHeartbeatFailed       = errors.New("heartbeat failed")
+	// ErrElectionFailed is returned when leader election fails.
+	ErrElectionFailed = errors.New("election failed")
+
+	// ErrHeartbeatFailed is returned when a heartbeat operation fails.
+	ErrHeartbeatFailed = errors.New("heartbeat failed")
+
+	// ErrTokenValidationFailed is returned when token validation fails.
 	ErrTokenValidationFailed = errors.New("token validation failed")
 
-	ErrInvalidConfig    = errors.New("invalid config")
-	ErrBucketNotFound   = errors.New("bucket not found")
+	// ErrInvalidConfig is returned when the election configuration is invalid.
+	ErrInvalidConfig = errors.New("invalid config")
+
+	// ErrBucketNotFound is returned when the specified KV bucket does not exist.
+	ErrBucketNotFound = errors.New("bucket not found")
+
+	// ErrPermissionDenied is returned when access to the KV bucket is denied.
 	ErrPermissionDenied = errors.New("permission denied")
 
+	// ErrConnectionLost is returned when the NATS connection is lost.
 	ErrConnectionLost = errors.New("connection lost")
 
-	ErrTokenInvalid  = errors.New("fencing token is invalid")
+	// ErrTokenInvalid is returned when a fencing token is invalid.
+	ErrTokenInvalid = errors.New("fencing token is invalid")
+
+	// ErrTokenMismatch is returned when a fencing token does not match.
 	ErrTokenMismatch = errors.New("fencing token mismatch")
 )
 
+// ElectionError represents an error that occurred during an election operation.
+// It provides structured error information including error code, instance ID,
+// reason, and the underlying error.
+//
+// Use errors.Is() and errors.As() to check for specific error types:
+//
+//	var electionErr *ElectionError
+//	if errors.As(err, &electionErr) {
+//	    log.Printf("Election error [%s]: %s", electionErr.Code, electionErr.Reason)
+//	}
 type ElectionError struct {
-	Code       string
+	// Code is a short error code identifying the error type.
+	Code string
+
+	// InstanceID is the instance ID where the error occurred.
 	InstanceID string
-	Reason     string
-	Err        error
+
+	// Reason is a human-readable description of the error.
+	Reason string
+
+	// Err is the underlying error, if any.
+	Err error
 }
 
 func (e *ElectionError) Unwrap() error {
 	return e.Err
 }
 
+// NewElectionError creates a new ElectionError with the given parameters.
+//
+// Example:
+//
+//	err := NewElectionError(
+//	    "ACQUIRE_FAILED",
+//	    "instance-1",
+//	    "key already exists",
+//	    originalErr,
+//	)
 func NewElectionError(code string, instanceID string, reason string, err error) *ElectionError {
 	return &ElectionError{
 		Code:       code,
@@ -65,12 +115,31 @@ func (e *ElectionError) Error() string {
 	return msg
 }
 
+// TokenValidationError represents an error that occurred during token validation.
+// It provides detailed information about the token mismatch.
+//
+// Use errors.Is() and errors.As() to check for this error type:
+//
+//	var tokenErr *TokenValidationError
+//	if errors.As(err, &tokenErr) {
+//	    log.Printf("Token validation failed: local=%s, kv=%s",
+//	        tokenErr.LocalToken, tokenErr.KvToken)
+//	}
 type TokenValidationError struct {
+	// LocalToken is the token stored locally by this instance.
 	LocalToken string
-	KvToken    string
-	LeaderID   string
-	Reason     string
-	Err        error
+
+	// KvToken is the token stored in the KV store.
+	KvToken string
+
+	// LeaderID is the current leader ID from the KV store.
+	LeaderID string
+
+	// Reason is a human-readable description of why validation failed.
+	Reason string
+
+	// Err is the underlying error, if any.
+	Err error
 }
 
 func (e *TokenValidationError) Error() string {
@@ -88,10 +157,31 @@ func (e *TokenValidationError) Unwrap() error {
 	return e.Err
 }
 
+// TimeoutError represents an error that occurred due to a timeout.
+// It provides information about which operation timed out and the timeout duration.
+//
+// Use errors.Is() to check for timeout errors:
+//
+//	if errors.Is(err, &TimeoutError{}) {
+//	    log.Println("Operation timed out")
+//	}
+//
+// Or check for a specific timeout error:
+//
+//	var timeoutErr *TimeoutError
+//	if errors.As(err, &timeoutErr) {
+//	    log.Printf("Operation %s timed out after %v",
+//	        timeoutErr.Operation, timeoutErr.Timeout)
+//	}
 type TimeoutError struct {
+	// Operation is the name of the operation that timed out.
 	Operation string
-	Timeout   time.Duration
-	Err       error
+
+	// Timeout is the timeout duration that was exceeded.
+	Timeout time.Duration
+
+	// Err is the underlying error, if any.
+	Err error
 }
 
 func (e *TimeoutError) Error() string {
@@ -120,6 +210,11 @@ func (e *TimeoutError) Is(target error) bool {
 	return false
 }
 
+// NewTimeoutError creates a new TimeoutError with the given parameters.
+//
+// Example:
+//
+//	err := NewTimeoutError("heartbeat update", 5*time.Second, nil)
 func NewTimeoutError(operation string, timeout time.Duration, err error) *TimeoutError {
 	return &TimeoutError{
 		Operation: operation,
@@ -130,6 +225,25 @@ func NewTimeoutError(operation string, timeout time.Duration, err error) *Timeou
 
 // IsPermanentError classifies errors as permanent (demote immediately) vs transient (retry).
 // Permanent errors should not be retried.
+//
+// Permanent errors include:
+//   - Revision mismatch (another leader exists)
+//   - Key not found
+//   - Permission denied
+//   - Invalid configuration
+//
+// Use this function to determine if an error should cause immediate demotion
+// or if it should be retried with backoff.
+//
+// Example:
+//
+//	if IsPermanentError(err) {
+//	    // Demote immediately, don't retry
+//	    election.demote()
+//	} else {
+//	    // Retry with backoff
+//	    retryWithBackoff(err)
+//	}
 func IsPermanentError(err error) bool {
 	if err == nil {
 		return false
@@ -179,6 +293,24 @@ func IsPermanentError(err error) bool {
 
 // IsTransientError classifies errors as transient (retry with backoff) vs permanent (fail fast).
 // Transient errors are typically network issues, timeouts, or temporary unavailability.
+//
+// Transient errors include:
+//   - Timeouts
+//   - Connection lost/refused
+//   - Temporary unavailability
+//   - Network errors
+//
+// Use this function to determine if an error should be retried with backoff.
+//
+// Example:
+//
+//	if IsTransientError(err) {
+//	    // Retry with exponential backoff
+//	    retryWithBackoff(err)
+//	} else {
+//	    // Fail fast
+//	    return err
+//	}
 func IsTransientError(err error) bool {
 	if err == nil {
 		return false
@@ -219,11 +351,28 @@ func IsTransientError(err error) bool {
 	return true
 }
 
+// ValidationError represents a configuration validation error.
+// It provides detailed information about which field failed validation and why.
+//
+// Use errors.Is() and errors.As() to check for this error type:
+//
+//	var validationErr *ValidationError
+//	if errors.As(err, &validationErr) {
+//	    log.Printf("Invalid config: field %s = %v: %s",
+//	        validationErr.Field, validationErr.Value, validationErr.Reason)
+//	}
 type ValidationError struct {
-	Field  string
-	Value  interface{}
+	// Field is the name of the configuration field that failed validation.
+	Field string
+
+	// Value is the invalid value that was provided.
+	Value interface{}
+
+	// Reason is a human-readable explanation of why validation failed.
 	Reason string
-	Err    error
+
+	// Err is the underlying error, if any.
+	Err error
 }
 
 func (e *ValidationError) Error() string {
@@ -244,6 +393,12 @@ func (e *ValidationError) Unwrap() error {
 	return e.Err
 }
 
+// NewValidationError creates a new ValidationError with the given parameters.
+//
+// Example:
+//
+//	err := NewValidationError("TTL", 1*time.Second,
+//	    "must be >= HeartbeatInterval * 3")
 func NewValidationError(field string, value interface{}, reason string) *ValidationError {
 	return &ValidationError{
 		Field:  field,
