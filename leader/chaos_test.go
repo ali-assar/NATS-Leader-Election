@@ -191,12 +191,10 @@ func TestChaos_NetworkPartition(t *testing.T) {
 	defer election1.Stop()
 
 	// Wait for election1 to become leader before starting election2
-	// Calculation: Initial acquisition can take:
-	// - Initial jitter: 10-100ms
-	// - KV operation: ~10-50ms
-	// - Retry backoff (if first attempt fails): up to 350ms
-	// Total worst case: ~500ms, but with real NATS and potential retries, allow more time
-	waitForLeader(t, election1, true, 3*time.Second)
+	timing := TimingConfig{
+		HeartbeatInterval: cfg1.HeartbeatInterval,
+	}
+	waitForLeader(t, election1, true, timing.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader before starting election2")
 
 	// Now start election2 (it will become a follower since election1 is already leader)
@@ -207,24 +205,16 @@ func TestChaos_NetworkPartition(t *testing.T) {
 	// Simulate network partition by closing connection1
 	conn1.Close()
 
-	// Delay calculation for network partition scenario:
-	// 1. Disconnect grace period: 1s (explicitly set in cfg1)
-	//    After grace period expires, leader is demoted (becomes follower)
-	// 2. Key TTL expiration: Key still exists in KV store after demotion!
-	//    Key expires TTL (5s) after last heartbeat
-	//    Worst case: Last heartbeat was just before disconnect, so key expires ~5s after disconnect
-	// 3. Detection delays:
-	//    - Periodic check interval: 500ms (worst case: check just ran, next in 500ms)
-	//    - Initial jitter: 10-100ms
-	//    - Backoff on retry (if first attempt fails): up to 350ms (50ms + 100ms + 200ms)
-	// 4. Total minimum: 1s (grace) + 5s (TTL) + 500ms (periodic check) + 100ms (jitter) = 6.6s
-	// 5. With retries: 6.6s + 350ms = 6.95s
-	// 6. Add buffer for NATS propagation: ~1s
-	// 7. Total sleep before waitForLeader: ~8s
-	// 8. waitForLeader timeout: Additional 7s buffer for safety = 15s total
-	time.Sleep(8 * time.Second)
+	// Calculate timeout for network partition scenario
+	timing := TimingConfig{
+		TTL:                   cfg1.TTL,
+		HeartbeatInterval:     cfg1.HeartbeatInterval,
+		DisconnectGracePeriod: cfg1.DisconnectGracePeriod,
+	}
+	sleepDuration, waitTimeout := timing.CalculateNetworkPartitionTimeout()
+	time.Sleep(sleepDuration)
 	// With real NATS, watchers may take time to detect the key deletion or TTL expiration
-	waitForLeader(t, election2, true, 15*time.Second)
+	waitForLeader(t, election2, true, waitTimeout)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after partition")
 
 	mu.Lock()
@@ -302,12 +292,10 @@ func TestChaos_ProcessKill(t *testing.T) {
 	require.NoError(t, err)
 
 	// Wait for election1 to become leader before starting election2
-	// Calculation: Initial acquisition can take:
-	// - Initial jitter: 10-100ms
-	// - KV operation: ~10-50ms
-	// - Retry backoff (if first attempt fails): up to 350ms
-	// Total worst case: ~500ms, but with real NATS and potential retries, allow more time
-	waitForLeader(t, election1, true, 3*time.Second)
+	timing := TimingConfig{
+		HeartbeatInterval: cfg1.HeartbeatInterval,
+	}
+	waitForLeader(t, election1, true, timing.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader before starting election2")
 
 	// Now start election2 (it will become a follower since election1 is already leader)
@@ -323,22 +311,15 @@ func TestChaos_ProcessKill(t *testing.T) {
 	// Then stop (which may fail due to closed connection, but that's OK)
 	election1.Stop()
 
-	// Delay calculation for TTL expiration scenario:
-	// 1. Disconnect grace period: Default = max(3 * HeartbeatInterval, 5s) = 5s
-	//    (HeartbeatInterval=200ms, so 3*200ms=600ms < 5s, so grace period = 5s)
-	// 2. Key TTL expiration: Key expires TTL (5s) after last heartbeat
-	//    Worst case: Last heartbeat was just before disconnect, so key expires ~5s after disconnect
-	// 3. Detection delays:
-	//    - Periodic check interval: 500ms (worst case: check just ran, next in 500ms)
-	//    - Initial jitter: 10-100ms
-	//    - Backoff on retry (if first attempt fails): up to 350ms (50ms + 100ms + 200ms)
-	// 4. Total minimum: 5s (TTL) + 500ms (periodic check) + 100ms (jitter) = 5.6s
-	// 5. With retries: 5.6s + 350ms = 5.95s
-	// 6. Add buffer for NATS propagation: ~1s
-	// 7. Total sleep before waitForLeader: ~7s
-	// 8. waitForLeader timeout: Additional 8s buffer for safety = 15s total
-	time.Sleep(7 * time.Second)
-	waitForLeader(t, election2, true, 15*time.Second)
+	// Calculate timeout for TTL expiration scenario (process kill without DeleteKey)
+	timing := TimingConfig{
+		TTL:               cfg1.TTL,
+		HeartbeatInterval: cfg1.HeartbeatInterval,
+		// DisconnectGracePeriod not set, will use default
+	}
+	sleepDuration, waitTimeout := timing.CalculateTTLExpirationTimeout()
+	time.Sleep(sleepDuration)
+	waitForLeader(t, election2, true, waitTimeout)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after election1 dies")
 
 	mu.Lock()
@@ -416,12 +397,10 @@ func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Wait for election1 to become leader before starting election2
-	// Calculation: Initial acquisition can take:
-	// - Initial jitter: 10-100ms
-	// - KV operation: ~10-50ms
-	// - Retry backoff (if first attempt fails): up to 350ms
-	// Total worst case: ~500ms, but with real NATS and potential retries, allow more time
-	waitForLeader(t, election1, true, 3*time.Second)
+	timing := TimingConfig{
+		HeartbeatInterval: cfg1.HeartbeatInterval,
+	}
+	waitForLeader(t, election1, true, timing.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader before starting election2")
 
 	// Now start election2 (it will become a follower since election1 is already leader)
@@ -435,20 +414,14 @@ func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Delay calculation for immediate deletion scenario:
-	// 1. Key deletion: Immediate (DeleteKey=true)
-	// 2. Detection delays:
-	//    - Periodic check interval: 500ms (worst case: check just ran, next in 500ms)
-	//    - Initial jitter: 10-100ms
-	//    - Backoff on retry (if first attempt fails): up to 350ms (50ms + 100ms + 200ms)
-	// 3. Total minimum: 500ms (periodic check) + 100ms (jitter) = 600ms
-	// 4. With retries: 600ms + 350ms = 950ms
-	// 5. Add buffer for NATS propagation: ~500ms
-	// 6. Total sleep before waitForLeader: ~1.5s
-	// 7. waitForLeader timeout: Additional 8s buffer for safety = 10s total
-	time.Sleep(1500 * time.Millisecond)
+	// Calculate timeout for immediate deletion scenario (graceful shutdown with DeleteKey)
+	timing := TimingConfig{
+		HeartbeatInterval: cfg1.HeartbeatInterval,
+	}
+	sleepDuration, waitTimeout := timing.CalculateImmediateDeletionTimeout()
+	time.Sleep(sleepDuration)
 	// With DeleteKey, the key is deleted immediately, but watchers may take time to detect
-	waitForLeader(t, election2, true, 10*time.Second)
+	waitForLeader(t, election2, true, waitTimeout)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader quickly after key deletion")
 
 	mu.Lock()
