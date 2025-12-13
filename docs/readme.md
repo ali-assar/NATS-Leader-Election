@@ -15,13 +15,12 @@ Lightweight, portable, application-level leader election library built on **NATS
 - Health checker integration
 - Graceful shutdown
 - Full observability (metrics + logging)
+- Priority-based takeover
 - Comprehensive test suite
 
 **📋 TODO:**
 - RoleManager for multi-role management
-- Priority-based takeover
 - CLI tooling
-- Example applications
 - gRPC task distribution
 
 **See "Feature Status" section below for complete details.**
@@ -139,6 +138,10 @@ type ElectionConfig struct {
     // Health checking (OPTIONAL)
     HealthChecker          HealthChecker // Optional: nil = disabled, non-nil = enabled
     MaxConsecutiveFailures int           // Max consecutive failures before demotion (default: 3, only used if HealthChecker is set)
+    
+    // Priority-based takeover (OPTIONAL)
+    Priority               int           // Priority for leader selection (higher number = higher priority, default: 0 = no priority)
+    AllowPriorityTakeover  bool          // Enable priority-based preemption (default: false, disabled for safety)
 }
 
 // Note: Fencing tokens are automatically validated periodically if ValidationInterval > 0.
@@ -187,7 +190,7 @@ func NewElectionWithConn(nc *nats.Conn, cfg ElectionConfig) (Election, error)
 
 ### 1) Boot & Attempt
 
-1. Candidate computes value payload `{id: instanceID, token: uuid(), meta: {priority}}`.
+1. Candidate computes value payload `{id: instanceID, token: uuid(), priority: <priority>}` (priority included if configured).
 2. Candidate calls `kv.Create(groupKey, payload, nats.WithMaxAge(ttl))`.
 
    * If `Create` succeeds → candidate is leader. Callbacks `OnPromote` run.
@@ -247,6 +250,13 @@ func NewElectionWithConn(nc *nats.Conn, cfg ElectionConfig) (Election, error)
 - ✅ **Error Classification**: Transient vs permanent error handling
   - ✅ Automatic retry for transient errors
   - ✅ Fail-fast for permanent errors
+- ✅ **Priority-Based Takeover**: Optional priority system for leader selection
+  - ✅ `Priority` field in `ElectionConfig` (higher number = higher priority)
+  - ✅ Priority stored in KV payload
+  - ✅ Atomic priority-based takeover using revision-based `Update()`
+  - ✅ `AllowPriorityTakeover` config flag (opt-in, disabled by default)
+  - ✅ Takeover detection in watcher and heartbeat
+  - ⚠️ **Note**: Use with caution - prefer voluntary demotion over forced preemption
 
 #### Observability
 - ✅ **Structured Logging**: Zap-based logging with correlation IDs
@@ -283,14 +293,6 @@ func NewElectionWithConn(nc *nats.Conn, cfg ElectionConfig) (Election, error)
   - TODO: Create `RoleManager` interface and implementation
   - TODO: Aggregate status across multiple roles
   - TODO: Role-specific callbacks
-
-#### Advanced Features
-- 📋 **Priority-Based Takeover**: Optional priority system for leader selection
-  - TODO: Add `Priority` field to `ElectionConfig`
-  - TODO: Store priority in KV payload
-  - TODO: Implement safe priority-based takeover logic
-  - TODO: Add `AllowPriorityTakeover` config flag
-  - ⚠️ **Note**: Use with caution - prefer voluntary demotion over forced preemption
 
 #### Task Distribution
 - 📋 **gRPC Control Plane**: Task distribution from leader to followers
@@ -391,6 +393,8 @@ cfg := leader.ElectionConfig{
     // Logger: myLogger,              // Optional: structured logger
     // Metrics: myMetrics,            // Optional: Prometheus metrics
     // HealthChecker: myHealthChecker, // Optional: health checker
+    // Priority: 10,                  // Optional: priority for takeover (higher = higher priority)
+    // AllowPriorityTakeover: true,   // Optional: enable priority-based preemption (default: false)
 }
 
 e, err := leader.NewElectionWithConn(nc, cfg)
@@ -521,12 +525,11 @@ if err != nil {
 - Production-ready with comprehensive error handling and observability
 - Full test coverage (unit, integration, chaos tests)
 
-**Advanced Features: 📋 TODO**
-- Multi-role management (RoleManager)
-- Priority-based takeover
-- gRPC task distribution
-- CLI tooling
-- Example applications
+**Advanced Features:**
+- ✅ Priority-based takeover
+- 📋 Multi-role management (RoleManager)
+- 📋 gRPC task distribution
+- 📋 CLI tooling
 
 **See "Feature Status" section above for detailed breakdown.**
 

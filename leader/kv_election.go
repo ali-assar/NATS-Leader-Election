@@ -67,6 +67,13 @@ type kvElection struct {
 	healthFailureCount atomic.Int32
 }
 
+// leadershipPayload represents the value stored in the leadership key
+type leadershipPayload struct {
+	ID       string `json:"id"`
+	Token    string `json:"token"`
+	Priority int    `json:"priority,omitempty"` // Omit if 0 for backward compatibility
+}
+
 func newKVElection(nc JetStreamProvider, cfg ElectionConfig) (*kvElection, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, err
@@ -292,11 +299,13 @@ func (e *kvElection) attemptAcquireWithRetry(ctx context.Context) {
 func (e *kvElection) attemptAcquire() error {
 	token := uuid.New().String()
 
-	payload := map[string]interface{}{
-		"id":    e.cfg.InstanceID,
-		"token": token,
+	payload := leadershipPayload{
+		ID:       e.cfg.InstanceID,
+		Token:    token,
+		Priority: e.cfg.Priority,
 	}
 	payloadBytes, err := json.Marshal(payload)
+
 	if err != nil {
 		log := e.getLogger()
 		log.Error("acquire_failed",
@@ -315,6 +324,11 @@ func (e *kvElection) attemptAcquire() error {
 
 	rev, err := e.kv.Create(e.key, payloadBytes, opts...)
 	if err != nil {
+		// Key exists - check if we should attempt priority takeover
+		if e.cfg.AllowPriorityTakeover && e.cfg.Priority > 0 {
+			return e.attemptPriorityTakeover(payloadBytes)
+		}
+
 		log := e.getLogger()
 		log.Debug("acquire_failed",
 			append(e.logWithContext(e.ctx),
@@ -410,6 +424,52 @@ func (e *kvElection) becomeLeader(token string, rev uint64) {
 			e.onPromote(promoteCtx, token)
 		}()
 	}
+}
+
+func (e *kvElection) attemptPriorityTakeover(payloadBytes []byte) error {
+	entry, err := e.kv.Get(e.key)
+	if err != nil {
+		return err
+	}
+
+	var currentPayload leadershipPayload
+	if err := json.Unmarshal(entry.Value(), &currentPayload); err != nil {
+		return e.attemptAcquire()
+	}
+
+	if e.cfg.Priority <= currentPayload.Priority {
+		e.leaderID.Store(currentPayload.ID)
+		e.revision.Store(entry.Revision())
+		return fmt.Errorf("current leader has equal or higher priority: %d >= %d", currentPayload.Priority, e.cfg.Priority)
+	}
+
+	newRev, err := e.kv.Update(e.key, payloadBytes, entry.Revision())
+	if err != nil {
+		// Update failed - revision mismatch means someone else changed it
+		// This could mean:
+		// 1. Current leader updated (heartbeat) - we'll detect on next check
+		// 2. Another instance took over - we'll detect on next check
+		// 3. Key was deleted - we'll detect on next check
+		return fmt.Errorf("priority takeover failed (revision mismatch): %w", err)
+	}
+
+	log := e.getLogger()
+	log.Warn("priority_takeover_success",
+		append(e.logWithContext(e.ctx),
+			zap.String("previous_leader", currentPayload.ID),
+			zap.Int("previous_priority", currentPayload.Priority),
+			zap.Int("our_priority", e.cfg.Priority),
+			zap.Uint64("revision", newRev),
+		)...,
+	)
+
+	var newPayloadStruct leadershipPayload
+	json.Unmarshal(payloadBytes, &newPayloadStruct)
+
+	e.revision.Store(newRev)
+	e.token.Store(newPayloadStruct.Token)
+	e.becomeLeader(newPayloadStruct.Token, newRev)
+	return nil
 }
 
 func (e *kvElection) becomeFollower() {

@@ -51,5 +51,13 @@ func validateConfig(cfg ElectionConfig) error {
 		return NewValidationError("MaxConsecutiveFailures", cfg.MaxConsecutiveFailures, "must be >= 0")
 	}
 
+	// Validate priority if takeover is enabled
+	if cfg.AllowPriorityTakeover {
+		if cfg.Priority <= 0 {
+			return NewValidationError("Priority", cfg.Priority,
+				"priority must be > 0 when AllowPriorityTakeover is true")
+		}
+	}
+
 	return nil
 }

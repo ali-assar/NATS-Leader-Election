@@ -40,7 +40,7 @@ func (e *kvElection) watchLoop(ctx context.Context) {
 			if !ok {
 				log := e.getLogger()
 				log.Debug("watch_closed",
-					append(e.logWithContext(ctx))...,
+					e.logWithContext(ctx)...,
 				)
 				// When watcher closes, check if key still exists
 				// If not, trigger re-election
@@ -84,7 +84,7 @@ func (e *kvElection) checkKeyAndReelect(ctx context.Context) {
 		// Key is empty - trigger re-election
 		log := e.getLogger()
 		log.Debug("key_empty_triggering_reelection",
-			append(e.logWithContext(ctx))...,
+			e.logWithContext(ctx)...,
 		)
 		go e.attemptAcquireWithRetry(ctx)
 		return
@@ -146,22 +146,26 @@ func (e *kvElection) handleWatchEvent(entry Entry) {
 		return
 	}
 
-	var payload map[string]interface{}
+	var payload leadershipPayload
 	if err := json.Unmarshal(valueBytes, &payload); err != nil {
 		return
 	}
 
-	leaderIDInterface, ok := payload["id"]
-	if !ok {
-		return
-	}
+	newLeaderID := payload.ID
 
-	newLeaderID, ok := leaderIDInterface.(string)
-	if !ok {
-		return
-	}
-
+	// If we're the leader, check if we're still the leader
 	if e.IsLeader() {
+		// If the new leader ID is different, we've been taken over
+		if newLeaderID != e.cfg.InstanceID {
+			log := e.getLogger()
+			log.Warn("leadership_lost_via_watcher",
+				append(e.logWithContext(e.ctx),
+					zap.String("new_leader_id", newLeaderID),
+					zap.Uint64("revision", entry.Revision()),
+				)...,
+			)
+			e.becomeFollower()
+		}
 		return
 	}
 
@@ -179,6 +183,32 @@ func (e *kvElection) handleWatchEvent(entry Entry) {
 		e.revision.Store(entry.Revision())
 		return
 	}
-
+	e.leaderID.Store(newLeaderID)
 	e.revision.Store(entry.Revision())
+
+	// Check if we should attempt priority takeover
+	if e.cfg.AllowPriorityTakeover && e.cfg.Priority > payload.Priority {
+		log := e.getLogger()
+		log.Info("priority_takeover_opportunity",
+			append(e.logWithContext(e.ctx),
+				zap.String("current_leader", currentLeaderID),
+				zap.Int("current_priority", payload.Priority),
+				zap.Int("our_priority", e.cfg.Priority),
+			)...,
+		)
+
+		// Attempt takeover in a goroutine to avoid blocking watcher
+		e.wg.Add(1)
+		go func() {
+			defer e.wg.Done()
+			if err := e.attemptAcquire(); err != nil {
+				// Takeover failed - stay as follower
+				log.Debug("priority_takeover_failed",
+					append(e.logWithContext(e.ctx),
+						zap.Error(err),
+					)...,
+				)
+			}
+		}()
+	}
 }

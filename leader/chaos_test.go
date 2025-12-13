@@ -429,6 +429,202 @@ func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
 	mu.Unlock()
 }
 
+// TestChaos_PriorityTakeover tests priority takeover in a real NATS environment
+func TestChaos_PriorityTakeover(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Start embedded NATS server
+	server, err := StartEmbeddedNATSServer(ctx)
+	require.NoError(t, err)
+	defer func() {
+		err := StopEmbeddedNATSServer(server)
+		require.NoError(t, err)
+	}()
+
+	// Create KV bucket
+	bucketName := "test-leaders"
+	conn1, err := nats.Connect(server.ClientURL())
+	require.NoError(t, err)
+	defer conn1.Close()
+
+	err = CreateKVBucket(conn1, bucketName, 10*time.Second)
+	require.NoError(t, err)
+	defer func() {
+		err := CleanupKVBucket(conn1, bucketName)
+		require.NoError(t, err)
+	}()
+
+	conn2, err := nats.Connect(server.ClientURL())
+	require.NoError(t, err)
+	defer conn2.Close()
+
+	// Create two elections with different priorities
+	cfg1 := ElectionConfig{
+		Bucket:                bucketName,
+		Group:                 "test-group",
+		InstanceID:            "instance-1",
+		TTL:                   10 * time.Second,
+		HeartbeatInterval:     200 * time.Millisecond,
+		Priority:              10, // Lower priority
+		AllowPriorityTakeover: true,
+	}
+
+	cfg2 := ElectionConfig{
+		Bucket:                bucketName,
+		Group:                 "test-group",
+		InstanceID:            "instance-2",
+		TTL:                   10 * time.Second,
+		HeartbeatInterval:     200 * time.Millisecond,
+		Priority:              20, // Higher priority
+		AllowPriorityTakeover: true,
+	}
+
+	election1, err := NewElectionWithConn(conn1, cfg1)
+	require.NoError(t, err)
+
+	election2, err := NewElectionWithConn(conn2, cfg2)
+	require.NoError(t, err)
+
+	// Track callbacks
+	var demote1Count, promote2Count int
+	var mu sync.Mutex
+
+	election1.OnDemote(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		demote1Count++
+	})
+
+	election2.OnPromote(func(ctx context.Context, token string) {
+		mu.Lock()
+		defer mu.Unlock()
+		promote2Count++
+	})
+
+	// Start election1 first (lower priority)
+	err = election1.Start(ctx)
+	require.NoError(t, err)
+	defer election1.Stop()
+
+	// Wait for election1 to become leader
+	initialTiming := TimingConfig{
+		HeartbeatInterval: cfg1.HeartbeatInterval,
+	}
+	waitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
+	assert.True(t, election1.IsLeader(), "Election1 should be leader")
+
+	// Start election2 (higher priority)
+	err = election2.Start(ctx)
+	require.NoError(t, err)
+	defer election2.Stop()
+
+	// Wait for election2 to take over
+	// Priority takeover should be fast (no need to wait for TTL)
+	waitForLeader(t, election2, true, 3*time.Second)
+	assert.True(t, election2.IsLeader(), "Election2 should take over leadership")
+
+	// Wait for election1 to detect the takeover
+	// Leaders don't have watchers, so they detect takeover on next heartbeat failure
+	// Wait for at least one heartbeat interval + buffer for heartbeat to fail
+	waitForCondition(t, func() bool {
+		return !election1.IsLeader()
+	}, cfg1.HeartbeatInterval*2+500*time.Millisecond, "election1 to be demoted")
+	assert.False(t, election1.IsLeader(), "Election1 should be demoted")
+
+	mu.Lock()
+	assert.Equal(t, 1, promote2Count, "Election2's OnPromote should be called")
+	assert.Equal(t, 1, demote1Count, "Election1's OnDemote should be called")
+	mu.Unlock()
+}
+
+// TestChaos_PriorityTakeoverWithNetworkPartition tests priority takeover during network partition
+func TestChaos_PriorityTakeoverWithNetworkPartition(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Start embedded NATS server
+	server, err := StartEmbeddedNATSServer(ctx)
+	require.NoError(t, err)
+	defer func() {
+		err := StopEmbeddedNATSServer(server)
+		require.NoError(t, err)
+	}()
+
+	// Create KV bucket
+	bucketName := "test-leaders"
+	conn1, err := nats.Connect(server.ClientURL())
+	require.NoError(t, err)
+	defer conn1.Close()
+
+	err = CreateKVBucket(conn1, bucketName, 5*time.Second)
+	require.NoError(t, err)
+	defer func() {
+		err := CleanupKVBucket(conn1, bucketName)
+		require.NoError(t, err)
+	}()
+
+	conn2, err := nats.Connect(server.ClientURL())
+	require.NoError(t, err)
+	defer conn2.Close()
+
+	// Create two elections with different priorities
+	cfg1 := ElectionConfig{
+		Bucket:                bucketName,
+		Group:                 "test-group",
+		InstanceID:            "instance-1",
+		TTL:                   5 * time.Second,
+		HeartbeatInterval:     200 * time.Millisecond,
+		Priority:              10, // Lower priority
+		AllowPriorityTakeover: true,
+		DisconnectGracePeriod: 1 * time.Second,
+	}
+
+	cfg2 := ElectionConfig{
+		Bucket:                bucketName,
+		Group:                 "test-group",
+		InstanceID:            "instance-2",
+		TTL:                   5 * time.Second,
+		HeartbeatInterval:     200 * time.Millisecond,
+		Priority:              20, // Higher priority
+		AllowPriorityTakeover: true,
+	}
+
+	election1, err := NewElectionWithConn(conn1, cfg1)
+	require.NoError(t, err)
+
+	election2, err := NewElectionWithConn(conn2, cfg2)
+	require.NoError(t, err)
+
+	// Start election1 first (lower priority)
+	err = election1.Start(ctx)
+	require.NoError(t, err)
+	defer election1.Stop()
+
+	// Wait for election1 to become leader
+	initialTiming := TimingConfig{
+		HeartbeatInterval: cfg1.HeartbeatInterval,
+	}
+	waitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
+	assert.True(t, election1.IsLeader(), "Election1 should be leader")
+
+	// Start election2 (higher priority, but as follower initially)
+	err = election2.Start(ctx)
+	require.NoError(t, err)
+	defer election2.Stop()
+
+	// Simulate network partition by closing connection1
+	conn1.Close()
+
+	// Wait for grace period + some buffer
+	time.Sleep(2 * time.Second)
+
+	// Election2 should take over (either via priority takeover or after TTL expiration)
+	// With priority takeover enabled, it should happen faster
+	waitForLeader(t, election2, true, 5*time.Second)
+	assert.True(t, election2.IsLeader(), "Election2 should become leader")
+}
+
 // TestChaos_ThunderingHerd tests that multiple candidates don't cause thundering herd
 func TestChaos_ThunderingHerd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

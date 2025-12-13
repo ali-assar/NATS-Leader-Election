@@ -3,6 +3,7 @@ package leader
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -61,9 +62,10 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 			currentRev := e.revision.Load()
 
 			token := e.Token()
-			payload := map[string]interface{}{
-				"id":    e.cfg.InstanceID,
-				"token": token,
+			payload := leadershipPayload{
+				ID:       e.cfg.InstanceID,
+				Token:    token,
+				Priority: e.cfg.Priority,
 			}
 			payloadBytes, err := json.Marshal(payload)
 			if err != nil {
@@ -126,6 +128,29 @@ func (e *kvElection) heartbeatLoop(ctx context.Context) {
 					labels := e.getMetricsLabels()
 					labels["status"] = "failure"
 					e.cfg.Metrics.ObserveHeartbeatDuration(duration, labels)
+				}
+
+				// Check if it's a revision mismatch (possible priority takeover)
+				// Revision mismatch errors contain "revision mismatch" in the message
+				if strings.Contains(strings.ToLower(updateErr.Error()), "revision mismatch") {
+					// Get current leader to check if it's a priority takeover
+					entry, getErr := e.kv.Get(e.key)
+					if getErr == nil && entry != nil {
+						var currentPayload leadershipPayload
+						if json.Unmarshal(entry.Value(), &currentPayload) == nil {
+							if currentPayload.ID != e.cfg.InstanceID {
+								// We were taken over!
+								log.Warn("leadership_taken_over",
+									append(e.logWithContext(ctx),
+										zap.String("new_leader", currentPayload.ID),
+										zap.Int("new_priority", currentPayload.Priority),
+										zap.Int("our_priority", e.cfg.Priority),
+										zap.Uint64("revision", entry.Revision()),
+									)...,
+								)
+							}
+						}
+					}
 				}
 
 				if IsPermanentError(updateErr) {

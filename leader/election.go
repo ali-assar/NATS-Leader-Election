@@ -42,6 +42,18 @@ type ElectionConfig struct {
 	// If health check fails MaxConsecutiveFailures times consecutively, leader demotes.
 	HealthChecker          HealthChecker // Optional: nil = disabled, non-nil = enabled
 	MaxConsecutiveFailures int           // Max consecutive failures before demotion (default: 3, only used if HealthChecker is set)
+
+	// Priority-based takeover (OPTIONAL)
+	// Priority is used for leader selection when AllowPriorityTakeover is true.
+	// Higher number = higher priority. Default: 0 (no priority).
+	Priority int
+
+	// AllowPriorityTakeover enables priority-based preemption.
+	// If true, a higher-priority instance can take over from a lower-priority leader.
+	// If false, priority is ignored and first-come-first-served applies.
+	// Default: false (disabled for safety).
+	// WARNING: Use with caution - can cause service disruption.
+	AllowPriorityTakeover bool
 }
 
 // StopOptions configures the behavior of StopWithContext.
