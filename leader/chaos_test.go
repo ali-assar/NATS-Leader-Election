@@ -191,10 +191,10 @@ func TestChaos_NetworkPartition(t *testing.T) {
 	defer election1.Stop()
 
 	// Wait for election1 to become leader before starting election2
-	timing := TimingConfig{
+	initialTiming := TimingConfig{
 		HeartbeatInterval: cfg1.HeartbeatInterval,
 	}
-	waitForLeader(t, election1, true, timing.CalculateInitialAcquisitionTimeout())
+	waitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader before starting election2")
 
 	// Now start election2 (it will become a follower since election1 is already leader)
@@ -206,12 +206,12 @@ func TestChaos_NetworkPartition(t *testing.T) {
 	conn1.Close()
 
 	// Calculate timeout for network partition scenario
-	timing := TimingConfig{
+	partitionTiming := TimingConfig{
 		TTL:                   cfg1.TTL,
 		HeartbeatInterval:     cfg1.HeartbeatInterval,
 		DisconnectGracePeriod: cfg1.DisconnectGracePeriod,
 	}
-	sleepDuration, waitTimeout := timing.CalculateNetworkPartitionTimeout()
+	sleepDuration, waitTimeout := partitionTiming.CalculateNetworkPartitionTimeout()
 	time.Sleep(sleepDuration)
 	// With real NATS, watchers may take time to detect the key deletion or TTL expiration
 	waitForLeader(t, election2, true, waitTimeout)
@@ -292,10 +292,10 @@ func TestChaos_ProcessKill(t *testing.T) {
 	require.NoError(t, err)
 
 	// Wait for election1 to become leader before starting election2
-	timing := TimingConfig{
+	initialTiming := TimingConfig{
 		HeartbeatInterval: cfg1.HeartbeatInterval,
 	}
-	waitForLeader(t, election1, true, timing.CalculateInitialAcquisitionTimeout())
+	waitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader before starting election2")
 
 	// Now start election2 (it will become a follower since election1 is already leader)
@@ -312,12 +312,12 @@ func TestChaos_ProcessKill(t *testing.T) {
 	election1.Stop()
 
 	// Calculate timeout for TTL expiration scenario (process kill without DeleteKey)
-	timing := TimingConfig{
+	ttlTiming := TimingConfig{
 		TTL:               cfg1.TTL,
 		HeartbeatInterval: cfg1.HeartbeatInterval,
 		// DisconnectGracePeriod not set, will use default
 	}
-	sleepDuration, waitTimeout := timing.CalculateTTLExpirationTimeout()
+	sleepDuration, waitTimeout := ttlTiming.CalculateTTLExpirationTimeout()
 	time.Sleep(sleepDuration)
 	waitForLeader(t, election2, true, waitTimeout)
 	assert.True(t, election2.IsLeader(), "Election2 should become leader after election1 dies")
@@ -397,10 +397,10 @@ func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Wait for election1 to become leader before starting election2
-	timing := TimingConfig{
+	initialTiming := TimingConfig{
 		HeartbeatInterval: cfg1.HeartbeatInterval,
 	}
-	waitForLeader(t, election1, true, timing.CalculateInitialAcquisitionTimeout())
+	waitForLeader(t, election1, true, initialTiming.CalculateInitialAcquisitionTimeout())
 	assert.True(t, election1.IsLeader(), "Election1 should be leader before starting election2")
 
 	// Now start election2 (it will become a follower since election1 is already leader)
@@ -415,10 +415,10 @@ func TestChaos_ProcessKillWithDeleteKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Calculate timeout for immediate deletion scenario (graceful shutdown with DeleteKey)
-	timing := TimingConfig{
+	deleteTiming := TimingConfig{
 		HeartbeatInterval: cfg1.HeartbeatInterval,
 	}
-	sleepDuration, waitTimeout := timing.CalculateImmediateDeletionTimeout()
+	sleepDuration, waitTimeout := deleteTiming.CalculateImmediateDeletionTimeout()
 	time.Sleep(sleepDuration)
 	// With DeleteKey, the key is deleted immediately, but watchers may take time to detect
 	waitForLeader(t, election2, true, waitTimeout)
