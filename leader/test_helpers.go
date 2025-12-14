@@ -53,5 +53,3 @@ func WaitForHeartbeat(t *testing.T, election Election, initialHeartbeat time.Tim
 		return status.LastHeartbeat.After(initialHeartbeat)
 	}, timeout, "heartbeat")
 }
-
-
