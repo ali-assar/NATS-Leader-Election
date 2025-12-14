@@ -3,6 +3,7 @@ package leader
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -314,8 +315,11 @@ func TestValidationLoop_InvalidToken(t *testing.T) {
 	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
+	var demoteMu sync.Mutex
 	var demoteCalled bool
 	election.OnDemote(func() {
+		demoteMu.Lock()
+		defer demoteMu.Unlock()
 		demoteCalled = true
 	})
 
@@ -355,10 +359,15 @@ func TestValidationLoop_InvalidToken(t *testing.T) {
 
 	// Wait for onDemote callback
 	WaitForCondition(t, func() bool {
+		demoteMu.Lock()
+		defer demoteMu.Unlock()
 		return demoteCalled
 	}, 500*time.Millisecond, "OnDemote callback")
 
-	assert.True(t, demoteCalled, "OnDemote callback should be called")
+	demoteMu.Lock()
+	wasCalled := demoteCalled
+	demoteMu.Unlock()
+	assert.True(t, wasCalled, "OnDemote callback should be called")
 
 	defer func() { _ = election.Stop() }()
 }
@@ -402,7 +411,7 @@ func TestValidationLoop_Timeout(t *testing.T) {
 	// Make Get() slow (longer than validation timeout of 2 seconds)
 	// This simulates a network delay or slow KV store
 	slowDelay := 3 * time.Second
-	mockKV.GetFunc = func(key string) (natsmock.Entry, error) {
+	mockKV.SetGetFunc(func(key string) (natsmock.Entry, error) {
 		time.Sleep(slowDelay)
 		// Return the stored entry after delay
 		return &natsmock.MockEntryImpl{
@@ -410,7 +419,7 @@ func TestValidationLoop_Timeout(t *testing.T) {
 			ValueVal: entryValue,
 			RevVal:   entryRev,
 		}, nil
-	}
+	})
 
 	// Wait for validation loop to run and timeout
 	// The validation timeout is 2 seconds (defaultValidationTimeout)

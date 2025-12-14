@@ -2,6 +2,7 @@ package leader
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -97,8 +98,11 @@ func TestHealthCheck_UnhealthyLeaderDemotes(t *testing.T) {
 	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
+	var demoteMu sync.Mutex
 	var demoteCalled bool
 	election.OnDemote(func() {
+		demoteMu.Lock()
+		defer demoteMu.Unlock()
 		demoteCalled = true
 	})
 
@@ -117,10 +121,15 @@ func TestHealthCheck_UnhealthyLeaderDemotes(t *testing.T) {
 
 	// Wait for onDemote callback
 	WaitForCondition(t, func() bool {
+		demoteMu.Lock()
+		defer demoteMu.Unlock()
 		return demoteCalled
 	}, 500*time.Millisecond, "OnDemote callback")
 
-	assert.True(t, demoteCalled, "OnDemote callback should be called")
+	demoteMu.Lock()
+	wasCalled := demoteCalled
+	demoteMu.Unlock()
+	assert.True(t, wasCalled, "OnDemote callback should be called")
 	assert.GreaterOrEqual(t, healthChecker.getCalls(), 3, "Health checker should be called at least 3 times")
 
 	defer func() { _ = election.Stop() }()

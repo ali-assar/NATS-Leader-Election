@@ -106,8 +106,13 @@ func (m *MockKeyValue) Create(key string, value []byte, opts ...KVOption) (uint6
 		time.Sleep(m.delay)
 	}
 
-	if m.CreateFunc != nil {
-		result, err := m.CreateFunc(key, value, opts...)
+	// Read CreateFunc with lock to avoid race condition
+	m.mu.RLock()
+	createFunc := m.CreateFunc
+	m.mu.RUnlock()
+
+	if createFunc != nil {
+		result, err := createFunc(key, value, opts...)
 		select {
 		case m.CreateDoneChan <- struct{}{}:
 		default:
@@ -163,8 +168,13 @@ func (m *MockKeyValue) Update(key string, value []byte, rev uint64, opts ...KVOp
 		time.Sleep(m.delay)
 	}
 
-	if m.UpdateFunc != nil {
-		result, err := m.UpdateFunc(key, value, rev, opts...)
+	// Read UpdateFunc with lock to avoid race condition
+	m.mu.RLock()
+	updateFunc := m.UpdateFunc
+	m.mu.RUnlock()
+
+	if updateFunc != nil {
+		result, err := updateFunc(key, value, rev, opts...)
 		select {
 		case m.UpdateDoneChan <- struct{}{}:
 		default:
@@ -205,8 +215,13 @@ func (m *MockKeyValue) Get(key string) (Entry, error) {
 		time.Sleep(m.delay)
 	}
 
-	if m.GetFunc != nil {
-		return m.GetFunc(key)
+	// Read GetFunc with lock to avoid race condition
+	m.mu.RLock()
+	getFunc := m.GetFunc
+	m.mu.RUnlock()
+
+	if getFunc != nil {
+		return getFunc(key)
 	}
 
 	if m.failGet {
@@ -233,8 +248,13 @@ func (m *MockKeyValue) Delete(key string) error {
 		time.Sleep(m.delay)
 	}
 
-	if m.DeleteFunc != nil {
-		return m.DeleteFunc(key)
+	// Read DeleteFunc with lock to avoid race condition
+	m.mu.RLock()
+	deleteFunc := m.DeleteFunc
+	m.mu.RUnlock()
+
+	if deleteFunc != nil {
+		return deleteFunc(key)
 	}
 
 	if m.failDelete {
@@ -259,8 +279,13 @@ func (m *MockKeyValue) Watch(key string, opts ...WatchOption) (Watcher, error) {
 	default:
 	}
 
-	if m.WatchFunc != nil {
-		return m.WatchFunc(key, opts...)
+	// Read WatchFunc with lock to avoid race condition
+	m.mu.RLock()
+	watchFunc := m.WatchFunc
+	m.mu.RUnlock()
+
+	if watchFunc != nil {
+		return watchFunc(key, opts...)
 	}
 
 	if m.failWatch {
@@ -286,4 +311,39 @@ func (m *MockKeyValue) Watch(key string, opts ...WatchOption) (Watcher, error) {
 	close(watcher.UpdatesChan)
 
 	return watcher, nil
+}
+
+// SetUpdateFunc safely sets the UpdateFunc field with proper locking
+func (m *MockKeyValue) SetUpdateFunc(fn func(key string, value []byte, rev uint64, opts ...KVOption) (uint64, error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.UpdateFunc = fn
+}
+
+// SetCreateFunc safely sets the CreateFunc field with proper locking
+func (m *MockKeyValue) SetCreateFunc(fn func(key string, value []byte, opts ...KVOption) (uint64, error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.CreateFunc = fn
+}
+
+// SetGetFunc safely sets the GetFunc field with proper locking
+func (m *MockKeyValue) SetGetFunc(fn func(key string) (Entry, error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.GetFunc = fn
+}
+
+// SetDeleteFunc safely sets the DeleteFunc field with proper locking
+func (m *MockKeyValue) SetDeleteFunc(fn func(key string) error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.DeleteFunc = fn
+}
+
+// SetWatchFunc safely sets the WatchFunc field with proper locking
+func (m *MockKeyValue) SetWatchFunc(fn func(key string, opts ...WatchOption) (Watcher, error)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.WatchFunc = fn
 }

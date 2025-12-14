@@ -3,6 +3,7 @@ package leader
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,8 +29,11 @@ func TestDisconnect_GracePeriod(t *testing.T) {
 	kvElection, ok := election.(*kvElection)
 	assert.True(t, ok)
 
+	var demoteMu sync.Mutex
 	var demoteCalled bool
 	election.OnDemote(func() {
+		demoteMu.Lock()
+		defer demoteMu.Unlock()
 		demoteCalled = true
 	})
 
@@ -55,7 +59,10 @@ func TestDisconnect_GracePeriod(t *testing.T) {
 	}, 500*time.Millisecond, "Leader should be demoted after grace period")
 
 	assert.False(t, election.IsLeader(), "Should be demoted after grace period expires")
-	assert.True(t, demoteCalled, "OnDemote should be called")
+	demoteMu.Lock()
+	wasCalled := demoteCalled
+	demoteMu.Unlock()
+	assert.True(t, wasCalled, "OnDemote should be called")
 
 	defer func() { _ = election.Stop() }()
 }

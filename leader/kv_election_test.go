@@ -182,11 +182,14 @@ func TestOnPromote_Callback(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Track if callback was called
+	var callbackMu sync.Mutex
 	var callbackCalled bool
 	var callbackToken string
 	var callbackCtx context.Context
 
 	election.OnPromote(func(ctx context.Context, token string) {
+		callbackMu.Lock()
+		defer callbackMu.Unlock()
 		callbackCalled = true
 		callbackToken = token
 		callbackCtx = ctx
@@ -198,14 +201,21 @@ func TestOnPromote_Callback(t *testing.T) {
 
 	// Wait for attemptAcquire to complete and callback to be called
 	WaitForCondition(t, func() bool {
+		callbackMu.Lock()
+		defer callbackMu.Unlock()
 		return callbackCalled
 	}, 1*time.Second, "OnPromote callback")
 
 	// Check callback was called
-	assert.True(t, callbackCalled, "OnPromote callback should be called")
-	assert.NotEmpty(t, callbackToken, "Callback should receive a token")
-	assert.NotNil(t, callbackCtx, "Callback should receive a context")
-	assert.Equal(t, election.Token(), callbackToken, "Callback token should match election token")
+	callbackMu.Lock()
+	wasCalled := callbackCalled
+	token := callbackToken
+	ctx := callbackCtx
+	callbackMu.Unlock()
+	assert.True(t, wasCalled, "OnPromote callback should be called")
+	assert.NotEmpty(t, token, "Callback should receive a token")
+	assert.NotNil(t, ctx, "Callback should receive a context")
+	assert.Equal(t, election.Token(), token, "Callback token should match election token")
 }
 
 // TestOnDemote_Callback tests that OnDemote callback is called when losing leadership

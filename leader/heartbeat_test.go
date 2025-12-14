@@ -3,6 +3,7 @@ package leader
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -89,8 +90,11 @@ func TestRevisionMismatch(t *testing.T) {
 	assert.NotNil(t, election)
 
 	// Track if onDemote callback was called
+	var demoteMu sync.Mutex
 	demoteCalled := false
 	election.OnDemote(func() {
+		demoteMu.Lock()
+		defer demoteMu.Unlock()
 		demoteCalled = true
 	})
 
@@ -126,7 +130,10 @@ func TestRevisionMismatch(t *testing.T) {
 	assert.False(t, election.IsLeader(), "Expected to be demoted after revision mismatch")
 
 	// Verify onDemote callback was called
-	assert.True(t, demoteCalled, "Expected onDemote callback to be called")
+	demoteMu.Lock()
+	wasCalled := demoteCalled
+	demoteMu.Unlock()
+	assert.True(t, wasCalled, "Expected onDemote callback to be called")
 
 	// Verify state changed to FOLLOWER
 	finalStatus := election.Status()
@@ -177,17 +184,21 @@ func TestTransientError(t *testing.T) {
 
 	// Set UpdateFunc to fail first time with transient error, succeed second time
 	// This simulates a temporary network issue that resolves
+	var callMu sync.Mutex
 	callCount := 0
-	mockKV.UpdateFunc = func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
+	mockKV.SetUpdateFunc(func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
+		callMu.Lock()
 		callCount++
-		if callCount == 1 {
+		count := callCount
+		callMu.Unlock()
+		if count == 1 {
 			// First call fails with transient error (timeout)
 			return 0, errors.New("timeout")
 		}
 		// Second call succeeds - clear the func to use normal Update logic
-		mockKV.UpdateFunc = nil
+		mockKV.SetUpdateFunc(nil)
 		return mockKV.Update(key, value, rev)
-	}
+	})
 
 	// Wait for first heartbeat - it will fail with transient error
 	// We wait a bit longer than heartbeat interval to ensure it fired
@@ -246,8 +257,11 @@ func TestMultipleErrors(t *testing.T) {
 	assert.NotNil(t, election)
 
 	// Set up onDemote callback to track when demotion occurs
+	var demoteMu sync.Mutex
 	demoteCalled := false
 	election.OnDemote(func() {
+		demoteMu.Lock()
+		defer demoteMu.Unlock()
 		demoteCalled = true
 	})
 
@@ -272,16 +286,19 @@ func TestMultipleErrors(t *testing.T) {
 	// Set UpdateFunc to always fail with transient error (timeout)
 	// This simulates network issues or temporary NATS unavailability
 	// After 3 consecutive failures, the leader should demote
-	mockKV.UpdateFunc = func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
+	mockKV.SetUpdateFunc(func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
 		return 0, errors.New("timeout")
-	}
+	})
 
 	// Wait for 3 heartbeats (each will fail) - wait for demotion
 	WaitForLeader(t, election, false, heartbeatInterval*4)
 
 	// Verify demotion occurred after maxFailures threshold
 	assert.False(t, election.IsLeader(), "Expected to be demoted after 3 consecutive failures")
-	assert.True(t, demoteCalled, "Expected onDemote callback to be called")
+	demoteMu.Lock()
+	wasCalled := demoteCalled
+	demoteMu.Unlock()
+	assert.True(t, wasCalled, "Expected onDemote callback to be called")
 
 	// Verify state transition to FOLLOWER
 	finalStatus := election.Status()
@@ -342,12 +359,16 @@ func TestTimeoutError(t *testing.T) {
 	// Use channels to control Update() timing precisely
 	updateStartChan := make(chan struct{}, 1)
 	updateCompleteChan := make(chan struct{}, 1)
+	var callMu sync.Mutex
 	callCount := 0
 
 	// Set UpdateFunc to block on channel for first call, succeed for second
-	mockKV.UpdateFunc = func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
+	mockKV.SetUpdateFunc(func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
+		callMu.Lock()
 		callCount++
-		if callCount == 1 {
+		count := callCount
+		callMu.Unlock()
+		if count == 1 {
 			// First call: signal start, then block waiting for test to signal completion
 			select {
 			case updateStartChan <- struct{}{}:
@@ -363,9 +384,9 @@ func TestTimeoutError(t *testing.T) {
 			return rev + 1, nil
 		}
 		// Second call succeeds immediately (for recovery test)
-		mockKV.UpdateFunc = nil
+		mockKV.SetUpdateFunc(nil)
 		return mockKV.Update(key, value, rev)
-	}
+	})
 
 	// Wait for Update() to start (first heartbeat)
 	select {

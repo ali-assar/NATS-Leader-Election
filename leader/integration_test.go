@@ -32,17 +32,22 @@ func TestFullElectionCycle_Integration(t *testing.T) {
 	assert.NotNil(t, election)
 
 	// Track callbacks and tokens
+	var callbackMu sync.Mutex
 	var promoteCount int
 	var demoteCount int
 	var promoteTokens []string
 
 	election.OnPromote(func(ctx context.Context, token string) {
+		callbackMu.Lock()
+		defer callbackMu.Unlock()
 		promoteCount++
 		promoteTokens = append(promoteTokens, token)
 	})
 
 	var demoteCalled bool
 	election.OnDemote(func() {
+		callbackMu.Lock()
+		defer callbackMu.Unlock()
 		demoteCalled = true
 		demoteCount++
 	})
@@ -57,12 +62,26 @@ func TestFullElectionCycle_Integration(t *testing.T) {
 	assert.NotEmpty(t, election.LeaderID(), "Expected to have leader ID")
 
 	WaitForCondition(t, func() bool {
+		callbackMu.Lock()
+		defer callbackMu.Unlock()
 		return promoteCount > 0
 	}, 1*time.Second, "OnPromote callback")
-	assert.Equal(t, 1, promoteCount, "OnPromote should be called once")
-	assert.Equal(t, 1, len(promoteTokens), "Should have one token")
-	assert.Equal(t, election.Token(), promoteTokens[0], "Token should match")
-	assert.Equal(t, 0, demoteCount, "OnDemote should not be called yet")
+	callbackMu.Lock()
+	var pCount int
+	var tokenCount int
+	var token string
+	var dCount int
+	pCount = promoteCount
+	tokenCount = len(promoteTokens)
+	if len(promoteTokens) > 0 {
+		token = promoteTokens[0]
+	}
+	dCount = demoteCount
+	callbackMu.Unlock()
+	assert.Equal(t, 1, pCount, "OnPromote should be called once")
+	assert.Equal(t, 1, tokenCount, "Should have one token")
+	assert.Equal(t, election.Token(), token, "Token should match")
+	assert.Equal(t, 0, dCount, "OnDemote should not be called yet")
 
 	// Get mockKV and set up controllable watcher BEFORE demotion
 	// This ensures that when we become a follower, the watcher uses our custom function
@@ -79,15 +98,15 @@ func TestFullElectionCycle_Integration(t *testing.T) {
 		StopChan:    stopChan,
 	}
 
-	mockKV.WatchFunc = func(key string, opts ...natsmock.WatchOption) (natsmock.Watcher, error) {
+	mockKV.SetWatchFunc(func(key string, opts ...natsmock.WatchOption) (natsmock.Watcher, error) {
 		return customWatcher, nil
-	}
+	})
 
 	// Set UpdateFunc to always return revision mismatch error
 	// This simulates another instance updating the key, causing heartbeat to fail
-	mockKV.UpdateFunc = func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
+	mockKV.SetUpdateFunc(func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
 		return 0, errors.New("revision mismatch")
-	}
+	})
 
 	// Wait for demotion (heartbeat will fail on next interval)
 	WaitForLeader(t, election, false, heartbeatInterval*2)
@@ -95,11 +114,21 @@ func TestFullElectionCycle_Integration(t *testing.T) {
 
 	// Wait for onDemote callback
 	WaitForCondition(t, func() bool {
+		callbackMu.Lock()
+		defer callbackMu.Unlock()
 		return demoteCalled
 	}, 500*time.Millisecond, "OnDemote callback")
-	assert.True(t, demoteCalled, "OnDemote callback should be called")
-	assert.Equal(t, 1, demoteCount, "OnDemote should be called once")
-	assert.Equal(t, 1, promoteCount, "Promote count should still be 1")
+	callbackMu.Lock()
+	var wasCalled bool
+	var dCountAfterDemote int
+	var pCountAfterDemote int
+	wasCalled = demoteCalled
+	dCountAfterDemote = demoteCount
+	pCountAfterDemote = promoteCount
+	callbackMu.Unlock()
+	assert.True(t, wasCalled, "OnDemote callback should be called")
+	assert.Equal(t, 1, dCountAfterDemote, "OnDemote should be called once")
+	assert.Equal(t, 1, pCountAfterDemote, "Promote count should still be 1")
 
 	// Wait for watcher to start (it should have started when we became a follower)
 	select {
@@ -140,12 +169,21 @@ func TestFullElectionCycle_Integration(t *testing.T) {
 
 	// Wait for onPromote callback to be called again
 	WaitForCondition(t, func() bool {
+		callbackMu.Lock()
+		defer callbackMu.Unlock()
 		return promoteCount >= 2
 	}, 500*time.Millisecond, "OnPromote callback on re-election")
-	assert.Equal(t, 2, promoteCount, "OnPromote should be called twice")
-	assert.Equal(t, 2, len(promoteTokens), "Should have two tokens")
-	assert.NotEqual(t, promoteTokens[0], promoteTokens[1], "New token should be different from first token")
-	assert.Equal(t, election.Token(), promoteTokens[1], "Current token should match second token")
+	callbackMu.Lock()
+	var pCountReElection int
+	var tokenList []string
+	pCountReElection = promoteCount
+	tokenList = make([]string, len(promoteTokens))
+	copy(tokenList, promoteTokens)
+	callbackMu.Unlock()
+	assert.Equal(t, 2, pCountReElection, "OnPromote should be called twice")
+	assert.Equal(t, 2, len(tokenList), "Should have two tokens")
+	assert.NotEqual(t, tokenList[0], tokenList[1], "New token should be different from first token")
+	assert.Equal(t, election.Token(), tokenList[1], "Current token should match second token")
 
 	// Final cleanup
 	err = election.Stop()
@@ -252,7 +290,7 @@ func TestMultipleInstances_Integration(t *testing.T) {
 
 	watcherChans := make([]chan natsmock.Entry, 0, 3)
 	var watcherMu sync.Mutex
-	mockKV.WatchFunc = func(key string, opts ...natsmock.WatchOption) (natsmock.Watcher, error) {
+	mockKV.SetWatchFunc(func(key string, opts ...natsmock.WatchOption) (natsmock.Watcher, error) {
 		updatesChan := make(chan natsmock.Entry, 10)
 		watcherMu.Lock()
 		watcherChans = append(watcherChans, updatesChan)
@@ -261,7 +299,7 @@ func TestMultipleInstances_Integration(t *testing.T) {
 			UpdatesChan: updatesChan,
 			StopChan:    make(chan struct{}),
 		}, nil
-	}
+	})
 
 	// Start all elections simultaneously
 	var wg sync.WaitGroup
@@ -560,21 +598,25 @@ func TestFencingToken_NewLeaderInvalidatesOld_Integration(t *testing.T) {
 		StopChan:    make(chan struct{}),
 	}
 
+	var watchMu sync.Mutex
 	watchCount := 0
-	mockKV.WatchFunc = func(key string, opts ...natsmock.WatchOption) (natsmock.Watcher, error) {
+	mockKV.SetWatchFunc(func(key string, opts ...natsmock.WatchOption) (natsmock.Watcher, error) {
+		watchMu.Lock()
 		watchCount++
-		if watchCount == 1 {
+		count := watchCount
+		watchMu.Unlock()
+		if count == 1 {
 			// First watcher is for instance A (when it becomes follower)
 			return watcherA, nil
 		}
 		// Second watcher is for instance B (when it becomes follower)
 		return watcherB, nil
-	}
+	})
 
 	// Stop instance A's heartbeat by making Update fail
-	mockKV.UpdateFunc = func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
+	mockKV.SetUpdateFunc(func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
 		return 0, errors.New("revision mismatch")
-	}
+	})
 
 	// Wait for A to be demoted (heartbeat fails)
 	WaitForLeader(t, electionA, false, 500*time.Millisecond)
@@ -595,13 +637,13 @@ func TestFencingToken_NewLeaderInvalidatesOld_Integration(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Temporarily clear UpdateFunc to allow the update
-	mockKV.UpdateFunc = nil
+	mockKV.SetUpdateFunc(nil)
 	_, err = mockKV.Update("test-group", payloadBytesB, entry.Revision())
 	assert.NoError(t, err)
 	// Restore UpdateFunc
-	mockKV.UpdateFunc = func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
+	mockKV.SetUpdateFunc(func(key string, value []byte, rev uint64, opts ...natsmock.KVOption) (uint64, error) {
 		return 0, errors.New("revision mismatch")
-	}
+	})
 
 	// At this point, the KV store has B's token, but A still thinks it's leader
 	// (A was demoted due to heartbeat failure, but hasn't validated token yet)
@@ -759,9 +801,12 @@ func TestFencingToken_PeriodicValidation_Integration(t *testing.T) {
 	election, err := NewElection(NewMockConnAdapter(nc), cfg)
 	assert.NoError(t, err)
 
+	var demoteMu sync.Mutex
 	var demoteCalled bool
 	var demoteTime time.Time
 	election.OnDemote(func() {
+		demoteMu.Lock()
+		defer demoteMu.Unlock()
 		demoteCalled = true
 		demoteTime = time.Now()
 	})
@@ -805,10 +850,14 @@ func TestFencingToken_PeriodicValidation_Integration(t *testing.T) {
 
 	// Verify demotion happened
 	assert.False(t, election.IsLeader(), "Should be demoted after token becomes invalid")
-	assert.True(t, demoteCalled, "OnDemote callback should be called")
+	demoteMu.Lock()
+	wasCalled := demoteCalled
+	demoteTimeVal := demoteTime
+	demoteMu.Unlock()
+	assert.True(t, wasCalled, "OnDemote callback should be called")
 
 	// Verify demotion happened quickly (within validation interval + buffer)
-	demotionDelay := demoteTime.Sub(invalidationTime)
+	demotionDelay := demoteTimeVal.Sub(invalidationTime)
 	assert.Less(t, demotionDelay, 500*time.Millisecond, "Demotion should happen quickly after token invalidation")
 
 	_ = election.Stop()
