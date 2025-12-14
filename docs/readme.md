@@ -2,6 +2,14 @@
 
 Lightweight, portable, application-level leader election library built on **NATS KeyValue** (JetStream KV which uses RAFT under the hood). Designed to make applications act active/passive or to assign roles/tasks to specific instances in multi-environment deployments (Kubernetes, VMs, edge devices, etc.).
 
+## Installation
+
+```bash
+go get github.com/ali-assar/NATS-Leader-Election@latest
+```
+
+See [Quick Start](#quick-start) section below for usage examples.
+
 ---
 
 ## 🎯 Quick Status
